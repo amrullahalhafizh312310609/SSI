@@ -20,48 +20,13 @@ except Exception:
 app = Flask(__name__, static_folder='static')
 CORS(app) # Mengizinkan akses dari domain lain (seperti GitHub Pages)
 
-# Konfigurasi Database MySQL
-try:
-    _DB_CONNECT_TIMEOUT = int(os.environ.get('DB_CONNECT_TIMEOUT', '1'))
-except Exception:
-    _DB_CONNECT_TIMEOUT = 3
-
-if _DB_CONNECT_TIMEOUT <= 0:
-    _DB_CONNECT_TIMEOUT = 3
-
+# Konfigurasi Database MySQL (XAMPP default)
 DB_CONFIG = {
-    'host': os.environ.get('DB_HOST', 'localhost'),
-    'user': os.environ.get('DB_USER', 'root'),
-    'password': os.environ.get('DB_PASSWORD', ''),
-    'database': os.environ.get('DB_NAME', 'gudang_db'),
-    'connection_timeout': _DB_CONNECT_TIMEOUT,
-    'read_timeout': _DB_CONNECT_TIMEOUT,
-    'write_timeout': _DB_CONNECT_TIMEOUT
+    'host': 'mysql.railway.internal',
+    'user': 'root',
+    'password': 'KWawURwZjjJoTWOePsOADkdOefsfoVTp',
+    'database': 'railway'
 }
-
-_TOKENS = {}
-
-def _issue_token(username: str) -> str:
-    token = secrets.token_urlsafe(24)
-    _TOKENS[token] = {"user": username, "exp": time.time() + 8 * 60 * 60}
-    return token
-
-def _is_token_valid(token: str) -> bool:
-    if not token:
-        return False
-    data = _TOKENS.get(token)
-    if not data:
-        return False
-    if float(data.get("exp", 0)) < time.time():
-        _TOKENS.pop(token, None)
-        return False
-    return True
-
-def _require_auth():
-    token = request.headers.get('X-Auth-Token', '')
-    if not _is_token_valid(token):
-        return jsonify({"status": "error", "message": "Unauthorized"}), 401
-    return None
 
 def get_db_connection():
     try:
