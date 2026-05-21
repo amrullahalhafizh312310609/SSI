@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gudang PT. SEIGO SELARAS INDONESIA</title>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="static/style.css?v=2.3">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <!-- Fallback if JS fails -->
+    <noscript>
+        <div style="padding: 20px; text-align: center; background: white;">
+            <h1>JavaScript Dinonaktifkan</h1>
+            <p>Aplikasi ini memerlukan JavaScript untuk berjalan. Silakan aktifkan JavaScript di browser Anda.</p>
+        </div>
+    </noscript>
+
+    <div class="glass-bg">
+        <div class="blob-3"></div>
+    </div>
+    
+    <!-- Login Section -->
+    <div id="login-page" class="login-container">
+        <div class="login-card glassmorphism">
+            <div class="login-header">
+                <div class="brand-icon">
+                    <i class="fas fa-warehouse"></i>
+                </div>
+                <h2>PT. SEIGO SELARAS INDONESIA</h2>
+                <p>Silakan masuk untuk mengelola inventori</p>
+            </div>
+            <div class="login-form">
+                <div class="form-group">
+                    <label>Username</label>
+                    <div class="custom-input-wrapper">
+                        <i class="fas fa-user select-icon"></i>
+                        <input type="text" id="login-username" placeholder="Masukkan username" autocomplete="username">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <div class="custom-input-wrapper">
+                        <i class="fas fa-lock select-icon"></i>
+                        <input type="password" id="login-password" placeholder="Masukkan password" autocomplete="current-password">
+                    </div>
+                </div>
+                <button class="btn-primary" onclick="handleLogin()">
+                    <i class="fas fa-sign-in-alt"></i>
+                    <span>Masuk ke Sistem</span>
+                </button>
+                <p id="login-error" class="error-text" style="display: none;">Username atau password salah!</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="main-app" class="app-container" style="display: none;">
+        <!-- Sidebar Modern -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="brand">
+                    <div class="brand-icon">
+                        <i class="fas fa-warehouse"></i>
+                    </div>
+                    <span>Gudang PT. SSI</span>
+                </div>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <div class="nav-label">Menu Utama</div>
+                <ul>
+                    <li id="nav-dashboard" class="active"><a href="#" onclick="showSection('dashboard')"><i class="fas fa-th-large"></i> <span>Dashboard</span></a></li>
+                    <li id="nav-inventory"><a href="#" onclick="showSection('inventory')"><i class="fas fa-box-open"></i> <span>Inventori</span></a></li>
+                    <li id="nav-predictions"><a href="#" onclick="showSection('predictions')"><i class="fas fa-chart-line"></i> <span>Laporan Prediksi</span></a></li>
+                </ul>
+
+                <div class="nav-label">Klien Perusahaan</div>
+                <ul id="company-nav-list">
+                    <!-- Data populated by JS -->
+                </ul>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="user-card">
+                    <img src="https://ui-avatars.com/api/?name=Admin+Gudang&background=4f46e5&color=fff" alt="User">
+                    <div class="user-info">
+                        <div class="user-name">Admin Gudang</div>
+                        <div class="user-role">Super Admin</div>
+                    </div>
+                </div>
+                <button class="btn-logout" onclick="handleLogout()">
+                    <i class="fas fa-sign-out-alt"></i> <span>Keluar</span>
+                </button>
+            </div>
+        </aside>
+        <div id="sidebar-backdrop" class="sidebar-backdrop" onclick="closeSidebar()"></div>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="top-header">
+                <div class="header-left">
+                    <button class="icon-btn sidebar-toggle" onclick="toggleSidebar()" title="Menu">
+                        <i class="fas fa-bars"></i>
+                    </button>
+                    <div class="date-display">
+                        <i class="fas fa-calendar-day"></i>
+                        <span id="current-date">-</span>
+                    </div>
+                </div>
+                <div class="header-right">
+                    <button class="icon-btn" id="theme-toggle" onclick="toggleTheme()" title="Ganti Tema">
+                        <i class="fas fa-moon"></i>
+                    </button>
+                    <button class="icon-btn" onclick="showToast('Sistem sinkronisasi otomatis aktif.', 'success')" title="Status Sinkronisasi">
+                        <i class="fas fa-sync-alt fa-spin"></i>
+                    </button>
+                </div>
+            </header>
+
+            <div class="content-body">
+                
+                <!-- DASHBOARD SECTION -->
+                <section id="section-dashboard" class="app-section">
+                    <div class="welcome-section">
+                        <h1>Gudang <span style="color: var(--primary);">PT. SEIGO SELARAS INDONESIA</span></h1>
+                        <p>Sistem Manajemen Stok & Prediksi Kebutuhan Barang</p>
+                    </div>
+
+                    <div class="kpi-grid">
+                        <div class="kpi-card">
+                            <i class="fas fa-boxes-stacked" style="font-size: 1.5rem; color: var(--primary);"></i>
+                            <div>
+                                <div class="kpi-label">Total Barang</div>
+                                <div class="kpi-value" id="kpi-total-items">0</div>
+                            </div>
+                        </div>
+                        <div class="kpi-card">
+                            <i class="fas fa-check-circle" style="font-size: 1.5rem; color: var(--success);"></i>
+                            <div>
+                                <div class="kpi-label">Tersedia</div>
+                                <div class="kpi-value" id="kpi-available-items">0</div>
+                            </div>
+                        </div>
+                        <div class="kpi-card">
+                            <i class="fas fa-exclamation-triangle" style="font-size: 1.5rem; color: var(--danger);"></i>
+                            <div>
+                                <div class="kpi-label">Restock</div>
+                                <div class="kpi-value" id="kpi-restock-items">0</div>
+                            </div>
+                        </div>
+                        <div class="kpi-card">
+                            <i class="fas fa-city" style="font-size: 1.5rem; color: var(--accent);"></i>
+                            <div>
+                                <div class="kpi-label">Perusahaan</div>
+                                <div class="kpi-value" id="kpi-total-company">0</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card glassmorphism" style="margin-bottom: 2rem;">
+                        <div class="card-header">
+                            <div class="header-icon"><i class="fas fa-truck-ramp-box"></i></div>
+                            <h3>Daftar Barang Perlu Restock</h3>
+                        </div>
+                        <div class="table-container">
+                            <table class="modern-table">
+                                <thead>
+                                    <tr>
+                                        <th>Perusahaan</th>
+                                        <th>Barang</th>
+                                        <th>Stok</th>
+                                        <th>Safety Stock</th>
+                                        <th>ROP</th>
+                                        <th>Status</th>
+                                        <th>Aksi</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="restock-table-body">
+                                </tbody>
+                            </table>
+                            <div id="restock-empty" class="empty-state" style="display:none;">
+                                Tidak ada barang yang perlu restock.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card glassmorphism" style="margin-bottom: 2rem;">
+                        <div class="card-header">
+                            <div class="header-icon"><i class="fas fa-chart-line"></i></div>
+                            <h3>Grafik Barang Keluar (7 Hari Terakhir)</h3>
+                        </div>
+                        <div class="chart-box">
+                            <canvas id="transactionChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="dashboard-grid no-chart">
+                        <!-- Form Prediksi Section -->
+                        <div class="card prediction-card glassmorphism">
+                            <div class="card-header">
+                                <div class="header-icon"><i class="fas fa-sliders"></i></div>
+                                <h3>Konfigurasi Prediksi</h3>
+                            </div>
+                            
+                            <div class="form-container">
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label>Pilih Perusahaan</label>
+                                        <div class="custom-select-wrapper">
+                                            <i class="fas fa-city select-icon"></i>
+                                            <select id="perusahaan" onchange="updateItems()">
+                                                <option value="" disabled selected>Pilih Klien Perusahaan</option>
+                                                <!-- Data populated by JS -->
+                                            </select>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="form-group">
+                                        <label>Pilih Nama Barang</label>
+                                        <div class="custom-select-wrapper">
+                                            <i class="fas fa-boxes-stacked select-icon"></i>
+                                            <select id="nama_barang">
+                                                <option value="" disabled selected>Pilih Barang...</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label>Satuan Unit</label>
+                                        <div class="custom-select-wrapper">
+                                            <i class="fas fa-weight-hanging select-icon"></i>
+                                            <select id="satuan">
+                                                <option value="kg">Kilogram (kg)</option>
+                                                <option value="pcs">Pieces (pcs)</option>
+                                                <option value="roll">Roll</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Target Tanggal</label>
+                                        <div class="custom-input-wrapper">
+                                            <i class="fas fa-calendar-check select-icon"></i>
+                                            <input type="date" id="tanggal">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label>Lead Time (Hari)</label>
+                                        <div class="custom-input-wrapper">
+                                            <i class="fas fa-truck-fast select-icon"></i>
+                                            <input type="number" id="lead-time" min="1" value="3">
+                                        </div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Service Level</label>
+                                        <div class="custom-select-wrapper">
+                                            <i class="fas fa-shield-halved select-icon"></i>
+                                            <select id="service-level">
+                                                <option value="0.90">90%</option>
+                                                <option value="0.95" selected>95%</option>
+                                                <option value="0.99">99%</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <button class="btn-primary" onclick="predictStock()">
+                                    <i class="fas fa-wand-magic-sparkles"></i>
+                                    <span>Hitung Kebutuhan</span>
+                                </button>
+
+                                <div class="divider"></div>
+
+                                <div class="action-buttons-row">
+                                    <button class="btn-action btn-history" type="button" onclick="toggleHistoryForm()">
+                                        <i class="fas fa-plus-circle"></i> Tambah Riwayat
+                                    </button>
+                                    <button class="btn-action btn-excel" type="button" onclick="exportToExcel()">
+                                        <i class="fas fa-file-export"></i> Ekspor Excel
+                                    </button>
+                                </div>
+
+                                <div id="history-form" class="history-form" style="display: none;">
+                                    <div class="form-row">
+                                        <div class="form-group">
+                                            <label>Tanggal Transaksi</label>
+                                            <div class="custom-input-wrapper">
+                                                <i class="fas fa-calendar-check select-icon"></i>
+                                                <input type="date" id="history-date">
+                                            </div>
+                                        </div>
+                                        <div class="form-group">
+                                            <label>Jumlah Keluar</label>
+                                            <div class="custom-input-wrapper">
+                                                <i class="fas fa-arrow-up-right-dots select-icon"></i>
+                                                <input type="number" id="history-qty" min="0" placeholder="0">
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="form-actions">
+                                        <button class="btn-primary btn-small" type="button" onclick="addHistoryEntryFromUI()">Simpan Riwayat</button>
+                                        <button class="btn-text" type="button" onclick="toggleHistoryForm()">Tutup</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card result-card glassmorphism">
+                            <div class="card-header">
+                                <div class="header-icon"><i class="fas fa-chart-pie"></i></div>
+                                <h3>Hasil Estimasi</h3>
+                            </div>
+                            <div class="result-display">
+                                <div id="history-warning" class="warning-badge">
+                                    <i class="fas fa-exclamation-triangle"></i>
+                                    <span>Riwayat transaksi belum tersedia. Estimasi menggunakan data awal.</span>
+                                </div>
+
+                                <div class="prediction-main">
+                                    <div class="prediction-value" id="result">-</div>
+                                    <div class="prediction-label">Estimasi Kebutuhan (<span id="result-unit">UNIT</span>)</div>
+                                </div>
+
+                            <div class="chart-box" style="margin-top: 1rem;">
+                                <canvas id="predictChart"></canvas>
+                            </div>
+                                
+                                <div class="stock-info-grid">
+                                    <div class="stock-info-item">
+                                        <div class="stock-info-label">Stok Tersedia</div>
+                                        <div class="stock-info-value" id="current-stock-val">0</div>
+                                    </div>
+                                    <div class="stock-info-item">
+                                        <div class="stock-info-label">Perlu Ditambah</div>
+                                        <div class="stock-info-value highlight" id="needed-stock-val">0</div>
+                                    </div>
+                                    <div class="stock-info-item">
+                                        <div class="stock-info-label">Safety Stock</div>
+                                        <div class="stock-info-value" id="safety-stock-val">0</div>
+                                    </div>
+                                    <div class="stock-info-item">
+                                        <div class="stock-info-label">Reorder Point</div>
+                                        <div class="stock-info-value" id="rop-val">0</div>
+                                    </div>
+                                </div>
+
+                                <div class="stock-info-grid metrics-grid">
+                                    <div class="stock-info-item">
+                                        <div class="stock-info-label">MAE</div>
+                                        <div class="stock-info-value" id="metric-mae">-</div>
+                                    </div>
+                                    <div class="stock-info-item">
+                                        <div class="stock-info-label">RMSE</div>
+                                        <div class="stock-info-value" id="metric-rmse">-</div>
+                                    </div>
+                                    <div class="stock-info-item">
+                                        <div class="stock-info-label">R²</div>
+                                        <div class="stock-info-value" id="metric-r2">-</div>
+                                    </div>
+                                    <div class="stock-info-item">
+                                        <div class="stock-info-label">Akurasi</div>
+                                        <div class="stock-info-value" id="metric-acc">-</div>
+                                    </div>
+                                    <div class="stock-info-item">
+                                        <div class="stock-info-label">Status ROP</div>
+                                        <div class="stock-info-value rop-badge" id="rop-status-val">-</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="result-footer">
+                                <div class="layout-info">
+                                    <i class="fas fa-map-marker-alt"></i>
+                                    <span>Lokasi Penyimpanan: <strong id="storage-location">-</strong></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="dashboard-grid single-col">
+                        <!-- Layout Recommendation Section -->
+                        <div class="card glassmorphism">
+                            <div class="card-header">
+                                <div class="header-icon"><i class="fas fa-warehouse"></i></div>
+                                <h3>Rekomendasi Tata Letak</h3>
+                            </div>
+                            <div class="layout-editor-box">
+                                <div class="layout-text">
+                                    <p>Atur posisi penyimpanan optimal.</p>
+                                    <div class="layout-input-group">
+                                        <input type="text" id="new-location-input" placeholder="Contoh: A-01...">
+                                        <button class="btn-save-layout" onclick="saveNewLayout()">
+                                            <i class="fas fa-save"></i> Simpan
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="layout-visual-hint" onclick="openShelfVisualization()">
+                                    <i class="fas fa-th"></i>
+                                    <span>Visual Rak</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- INVENTORY SECTION -->
+                <section id="section-inventory" class="app-section" style="display: none;">
+                    <div class="section-header">
+                        <div class="header-with-action">
+                                <div>
+                                    <h1>Status <span class="text-gradient">Inventori Aktif</span></h1>
+                                    <p>Kelola ketersediaan barang dan update status stok secara instan.</p>
+                                </div>
+                                <div class="header-buttons">
+                                     <button class="btn-primary btn-small" onclick="toggleAddForm()">
+                                         <i class="fas fa-plus"></i> Tambah Data
+                                     </button>
+                                     <button class="btn-text btn-small" onclick="toggleStockInForm()">
+                                         <i class="fas fa-arrow-down"></i> Barang Masuk
+                                     </button>
+                                 </div>
+                            </div>
+                    </div>
+
+                    <!-- Add Inventory Form -->
+                    <div id="add-inventory-form" class="card" style="display: none; margin-bottom: 2rem;">
+                        <div class="card-header">
+                            <div class="header-icon"><i class="fas fa-plus-circle"></i></div>
+                            <h3>Tambah Barang Baru</h3>
+                        </div>
+                        <div class="form-container">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Nama Perusahaan</label>
+                                    <input type="text" id="new-perusahaan" placeholder="PT. Nama Perusahaan">
+                                </div>
+                                <div class="form-group">
+                                    <label>Nama Barang</label>
+                                    <input type="text" id="new-barang" placeholder="Nama/Ukuran Barang">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Satuan</label>
+                                    <input type="text" id="new-satuan" list="unit-options" placeholder="pcs / kg / roll">
+                                </div>
+                                <div class="form-group">
+                                    <label>Jumlah Stok</label>
+                                    <input type="number" id="new-stok" placeholder="0">
+                                </div>
+                                <div class="form-group">
+                                    <label>Lokasi Rak</label>
+                                    <input type="text" id="new-lokasi" placeholder="Contoh: A-01">
+                                </div>
+                            </div>
+                            <div class="form-actions" style="margin-top: 1rem; display: flex; gap: 10px;">
+                                <button class="btn-primary" onclick="submitNewInventory()" style="width: auto;">Simpan Barang</button>
+                                <button class="btn-text" onclick="toggleAddForm()">Batal</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="stockin-form" class="card" style="display: none; margin-bottom: 2rem;">
+                        <div class="card-header">
+                            <div class="header-icon"><i class="fas fa-arrow-down"></i></div>
+                            <h3>Transaksi Barang Masuk</h3>
+                        </div>
+                        <div class="form-container">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Tanggal</label>
+                                    <input type="date" id="stockin-date">
+                                </div>
+                                <div class="form-group">
+                                    <label>Perusahaan</label>
+                                    <select id="stockin-perusahaan" onchange="updateStockInItems()">
+                                        <option value="" disabled selected>Pilih Klien Perusahaan</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Barang</label>
+                                    <select id="stockin-nama-barang">
+                                        <option value="" disabled selected>Pilih Barang...</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Satuan</label>
+                                    <select id="stockin-satuan">
+                                        <option value="kg">Kilogram (kg)</option>
+                                        <option value="pcs" selected>Pieces (pcs)</option>
+                                        <option value="roll">Roll</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Jumlah Masuk</label>
+                                    <input type="number" id="stockin-qty" min="1" placeholder="0">
+                                </div>
+                            </div>
+                            <div class="form-actions" style="margin-top: 1rem; display: flex; gap: 10px;">
+                                <button class="btn-primary" type="button" onclick="addStockInEntryFromUI()" style="width: auto;">Simpan Barang Masuk</button>
+                                <button class="btn-text" type="button" onclick="toggleStockInForm()">Batal</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card" style="margin-bottom: 1rem;">
+                        <div class="form-container">
+                            <div class="form-row">
+                                <div class="form-group" style="flex: 1;">
+                                    <label>Pencarian</label>
+                                    <input type="text" id="inventory-search" placeholder="Cari perusahaan / barang / lokasi">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card" style="margin-bottom: 2rem;">
+                        <div class="table-container">
+                            <table class="modern-table">
+                                <thead>
+                                    <tr>
+                                        <th>Perusahaan</th>
+                                        <th>Barang</th>
+                                        <th>Stok</th>
+                                        <th>Satuan</th>
+                                        <th>Lokasi</th>
+                                        <th>Status</th>
+                                        <th>Aksi</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="inventory-table-body">
+                                    <!-- Data populated by JS -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="section-header" style="margin-top: 3rem;">
+                        <div class="header-with-action">
+                            <div>
+                                <h1>Riwayat <span class="text-gradient">Transaksi</span></h1>
+                                <p>Data barang masuk/keluar yang tercatat di sistem.</p>
+                            </div>
+                            <div class="header-buttons">
+                                <button class="btn-text btn-small" type="button" onclick="toggleHistoryView()" id="toggle-history-btn">Lihat Semua</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="card">
+                        <div class="table-container">
+                            <table class="modern-table">
+                                <thead>
+                                    <tr>
+                                        <th>Tanggal</th>
+                                        <th>Perusahaan</th>
+                                        <th>Barang</th>
+                                        <th>Satuan</th>
+                                        <th>Jenis</th>
+                                        <th>Jumlah</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="history-table-body">
+                                    <!-- Data populated by JS -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="section-predictions" class="app-section" style="display: none;">
+                    <div class="section-header">
+                        <div class="header-with-action">
+                            <div>
+                                <h1>Laporan <span class="text-gradient">Prediksi</span></h1>
+                                <p>Riwayat prediksi yang pernah dilakukan (untuk evaluasi prediksi vs aktual).</p>
+                            </div>
+                            <div class="header-buttons">
+                                <button class="btn-primary btn-small" type="button" onclick="refreshPredictionLogs()">
+                                    <i class="fas fa-rotate"></i> Refresh
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="table-container">
+                            <table class="modern-table">
+                                <thead>
+                                    <tr>
+                                        <th>Waktu</th>
+                                        <th>Perusahaan</th>
+                                        <th>Barang</th>
+                                        <th>Target</th>
+                                        <th>Prediksi</th>
+                                        <th>Stok</th>
+                                        <th>Perlu</th>
+                                        <th>ROP</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="prediction-log-body">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+            </div>
+        </main>
+    </div>
+
+    <!-- Shelf Visualization Modal -->
+    <div id="shelf-modal" class="modal">
+        <div class="modal-content glassmorphism">
+            <div class="modal-header">
+                <h3>Visualisasi Rak Gudang</h3>
+                <span class="close" onclick="closeShelfVisualization()">&times;</span>
+            </div>
+            <div class="shelf-grid-container">
+                <div class="shelf-legend">
+                    <div class="legend-item"><span class="dot occupied"></span> Terisi</div>
+                    <div class="legend-item"><span class="dot empty"></span> Kosong</div>
+                </div>
+                <div class="warehouse-grid" id="warehouse-grid">
+                    <!-- Grid generated by JS -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <datalist id="unit-options">
+        <option value="pcs"></option>
+        <option value="kg"></option>
+        <option value="roll"></option>
+        <option value="meter"></option>
+        <option value="box"></option>
+        <option value="set"></option>
+    </datalist>
+
+    <div id="toast-container" class="toast-container"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="static/script.js?v=1.7"></script>
+</body>
+</html>
