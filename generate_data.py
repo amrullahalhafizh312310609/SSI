@@ -14,10 +14,14 @@ def _get_conn():
     if timeout <= 0:
         timeout = 3
     return mysql.connector.connect(
+        def _get_conn():
+    return mysql.connector.connect(
         host=os.environ.get("DB_HOST", "localhost"),
+        port=int(os.environ.get("DB_PORT", "3306")),
         user=os.environ.get("DB_USER", "root"),
         password=os.environ.get("DB_PASSWORD", ""),
         database=os.environ.get("DB_NAME", "gudang_db"),
+    )
         connection_timeout=timeout,
         read_timeout=timeout,
         write_timeout=timeout,
