@@ -7,24 +7,12 @@ import mysql.connector
 
 
 def _get_conn():
-    try:
-        timeout = int(os.environ.get("DB_CONNECT_TIMEOUT", "1"))
-    except Exception:
-        timeout = 3
-    if timeout <= 0:
-        timeout = 3
-    return mysql.connector.connect(
-        def _get_conn():
     return mysql.connector.connect(
         host=os.environ.get("DB_HOST", "localhost"),
         port=int(os.environ.get("DB_PORT", "3306")),
         user=os.environ.get("DB_USER", "root"),
         password=os.environ.get("DB_PASSWORD", ""),
         database=os.environ.get("DB_NAME", "gudang_db"),
-    )
-        connection_timeout=timeout,
-        read_timeout=timeout,
-        write_timeout=timeout,
     )
 
 
@@ -105,7 +93,6 @@ def main():
     if purge_test_companies and purge_companies:
         placeholders = ",".join(["%s"] * len(purge_companies))
         try:
-            cursor.execute(f"DELETE FROM inventory WHERE company_name IN ({placeholders})", tuple(purge_companies))
             cursor.execute(f"DELETE FROM companies WHERE name IN ({placeholders})", tuple(purge_companies))
             conn.commit()
         except Exception:
