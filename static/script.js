@@ -181,7 +181,7 @@ async function addHistoryEntryFromUI() {
 // GitHub Pages / Remote API Configuration
 const isGitHubPages = window.location.hostname.includes('github.io');
 // GANTI URL INI dengan URL Backend Anda (misal dari Render.com) jika sudah hosting backend
-const REMOTE_API_URL = 'https://gudang-ssi-backend.onrender.com'; 
+const REMOTE_API_URL = 'https://web-production-28984.up.railway.app'; 
 const API_BASE_URL = isGitHubPages ? REMOTE_API_URL : '';
 
 async function getInventory() {
