@@ -212,17 +212,26 @@ body {
 }
 
 .login-header .brand-icon {
-    width: 70px;
-    height: 70px;
-    background: var(--primary);
-    color: white;
-    border-radius: 20px;
+    width: 96px;
+    height: 96px;
+    background: transparent;
+    border: 1px solid var(--glass-border);
+    color: var(--primary);
+    border-radius: 22px;
+    padding: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 2rem;
     margin: 0 auto 1.5rem;
     box-shadow: 0 10px 20px rgba(79, 70, 229, 0.3);
+    overflow: hidden;
+}
+
+.login-header .brand-icon img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
 }
 
 .login-header h2 {
@@ -273,20 +282,51 @@ body {
     padding: 0.5rem;
 }
 
+.sidebar .brand {
+    width: 100%;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 0;
+}
+
 .brand .brand-icon {
-    width: 40px;
-    height: 40px;
-    background: var(--primary);
-    color: white;
-    border-radius: 10px;
+    width: 56px;
+    height: 56px;
+    background: transparent;
+    border: 1px solid var(--glass-border);
+    color: var(--primary);
+    border-radius: 14px;
+    padding: 0;
     display: flex;
     align-items: center;
     justify-content: center;
+    overflow: hidden;
+}
+
+.sidebar .brand .brand-icon {
+    width: 220px;
+    height: 64px;
+    border-radius: 16px;
+}
+
+.brand .brand-icon img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
 }
 
 .brand span {
     font-weight: 800;
     font-size: 1.1rem;
+}
+
+.sidebar .brand span {
+    text-align: center;
+    font-size: 0.95rem;
+    line-height: 1.15;
+    max-width: 220px;
 }
 
 /* Modal & Toast Fixes */
@@ -311,6 +351,8 @@ body {
     max-width: 1000px;
     border-radius: var(--radius-xl);
     box-shadow: var(--shadow-premium);
+    max-height: 88vh;
+    overflow: auto;
 }
 
 .toast-container {
@@ -1164,6 +1206,33 @@ label {
 
 .modal-header h3 {
     font-weight: 900;
+}
+
+#workorder-modal .form-row {
+    gap: 14px;
+}
+
+#workorder-modal .form-group {
+    min-width: 0;
+}
+
+#workorder-modal input,
+#workorder-modal select {
+    width: 100%;
+}
+
+#workorder-modal .stock-input {
+    width: 100%;
+    text-align: left;
+}
+
+#workorder-modal .status-toggle {
+    text-align: left;
+}
+
+#workorder-modal pre {
+    max-height: 320px;
+    overflow: auto;
 }
 
 .close {

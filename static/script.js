@@ -16,6 +16,8 @@ let _historyAllMemo = { ts: 0, data: null };
 let _historyQuerySupported = true;
 let _inventoryFetchErrorShown = false;
 let inventorySearchTerm = '';
+let lastForecastResult = null;
+let activeWorkOrderModal = null;
 
 function showToast(message, type = 'info', title = '') {
     const container = document.getElementById('toast-container');
@@ -180,16 +182,60 @@ async function addHistoryEntryFromUI() {
 // Helper to get inventory from Backend
 // GitHub Pages / Remote API Configuration
 const isGitHubPages = window.location.hostname.includes('github.io');
+const isFileProtocol = window.location.protocol === 'file:';
+const isLocalhost =
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1';
 // GANTI URL INI dengan URL Backend Anda (misal dari Render.com) jika sudah hosting backend
 const REMOTE_API_URL = 'https://web-production-28984.up.railway.app'; 
-const API_BASE_URL = isGitHubPages ? REMOTE_API_URL : '';
+const LOCAL_API_URL = 'http://localhost:8000';
+const API_BASE_URL = isGitHubPages
+    ? REMOTE_API_URL
+    : (isFileProtocol ? LOCAL_API_URL : (isLocalhost && window.location.port !== '8000' ? LOCAL_API_URL : ''));
+
+function _joinApi(baseUrl, path) {
+    if (!baseUrl) return path;
+    const b = String(baseUrl).replace(/\/+$/, '');
+    const p = String(path || '').startsWith('/') ? String(path) : `/${String(path || '')}`;
+    return `${b}${p}`;
+}
+
+async function fetchApiWithFallback(path, options = {}) {
+    const candidates = [];
+    const add = (u) => {
+        const s = (u || '').trim();
+        if (!candidates.includes(s)) candidates.push(s);
+    };
+
+    add(API_BASE_URL);
+    add('');
+    add(LOCAL_API_URL);
+    add(REMOTE_API_URL);
+
+    let lastNetworkError = null;
+    let lastResponse = null;
+    for (const base of candidates) {
+        try {
+            const res = await fetch(_joinApi(base, path), options);
+            lastResponse = res;
+            if (res.status === 404) continue;
+            return res;
+        } catch (e) {
+            lastNetworkError = e;
+            continue;
+        }
+    }
+
+    if (lastResponse) return lastResponse;
+    throw lastNetworkError || new Error('Network error');
+}
 
 async function getInventory() {
     if (_inventoryMemo.data && (Date.now() - _inventoryMemo.ts) < 1500) {
         return _inventoryMemo.data;
     }
     try {
-        const response = await fetch(`${API_BASE_URL}/api/inventory`);
+        const response = await fetchApiWithFallback(`/api/inventory`);
         if (response.ok) {
             const remoteData = await response.json();
             if (Array.isArray(remoteData)) {
@@ -227,8 +273,8 @@ async function getHistory(limit = 2000, offset = 0) {
         return sliced;
     }
     try {
-        const url = `${API_BASE_URL}/api/history?limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}`;
-        const response = await fetch(url);
+        const path = `/api/history?limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}`;
+        const response = await fetchApiWithFallback(path);
         if (!response.ok) {
             _historyQuerySupported = false;
             const all = await getHistoryAll();
@@ -268,7 +314,7 @@ async function getHistoryAll() {
         return _historyAllMemo.data;
     }
     try {
-        const response = await fetch(`${API_BASE_URL}/api/history`);
+        const response = await fetchApiWithFallback(`/api/history`);
         if (response.ok) {
             const remoteData = await response.json();
             if (Array.isArray(remoteData)) {
@@ -291,9 +337,9 @@ async function getRestockList() {
     const lt = Number.isFinite(lead_time) && lead_time > 0 ? lead_time : 3;
     const sl = Number.isFinite(service_level) ? service_level : 0.95;
 
-    const url = `${API_BASE_URL}/api/restock?lead_time=${encodeURIComponent(String(lt))}&service_level=${encodeURIComponent(String(sl))}`;
+    const path = `/api/restock?lead_time=${encodeURIComponent(String(lt))}&service_level=${encodeURIComponent(String(sl))}`;
     try {
-        const response = await fetch(url);
+        const response = await fetchApiWithFallback(path);
         if (!response.ok) return [];
         const data = await response.json();
         return Array.isArray(data) ? data : [];
@@ -407,15 +453,28 @@ function initChart(data = []) {
         return;
     }
 
-    // Group data by date and sum quantities
     const grouped = data.reduce((acc, curr) => {
-        if (!curr.tanggal) return acc;
-        acc[curr.tanggal] = (acc[curr.tanggal] || 0) + (parseInt(curr.jumlah_terjual) || 0);
+        const tanggal = String(curr.tanggal || '').slice(0, 10);
+        if (!tanggal) return acc;
+
+        const monthKey = tanggal.slice(0, 7);
+        const jenis = String(curr.jenis || curr.jenis_transaksi || '').toLowerCase();
+        const isKeluar = jenis ? jenis.includes('keluar') : true;
+        if (!isKeluar) return acc;
+
+        const qtyRaw =
+            curr.jumlah_keluar ??
+            curr.qty_out ??
+            curr.jumlah_terjual ??
+            curr.jumlah ??
+            0;
+        const qty = Number(qtyRaw) || 0;
+        acc[monthKey] = (acc[monthKey] || 0) + qty;
         return acc;
     }, {});
 
-    const sortedDates = Object.keys(grouped).sort();
-    const labels = sortedDates.slice(-7); // Last 7 days
+    const sortedMonths = Object.keys(grouped).sort();
+    const labels = sortedMonths.slice(-12);
     const values = labels.map(l => grouped[l]);
 
     if (transactionChart) {
@@ -427,7 +486,7 @@ function initChart(data = []) {
         data: {
             labels: labels,
             datasets: [{
-                label: 'Volume Transaksi',
+                label: 'Permintaan (Keluar)',
                 data: values,
                 borderColor: '#4f46e5',
                 backgroundColor: 'rgba(79, 70, 229, 0.1)',
@@ -805,6 +864,7 @@ async function showSection(sectionId) {
     if (sectionId === 'inventory') await fetchInventory();
     if (sectionId === 'dashboard') await renderRestockList();
     if (sectionId === 'predictions') await refreshPredictionLogs();
+    if (sectionId === 'planning') await renderWorkOrders();
     closeSidebar();
 }
 
@@ -1281,8 +1341,8 @@ async function exportToExcel() {
 
 async function getPredictionLogs(limit = 100, offset = 0) {
     try {
-        const url = `${API_BASE_URL}/api/predictions?limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}`;
-        const response = await fetch(url);
+        const path = `/api/predictions?limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}`;
+        const response = await fetchApiWithFallback(path);
         if (!response.ok) return [];
         const data = await response.json();
         return Array.isArray(data) ? data : [];
@@ -1326,6 +1386,414 @@ async function refreshPredictionLogs() {
             </tr>
         `;
     }).join('');
+}
+
+async function getWorkOrders(limit = 200, offset = 0) {
+    try {
+        const path = `/api/work-orders?limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}`;
+        const response = await fetchApiWithFallback(path);
+        if (!response.ok) return [];
+        const data = await response.json();
+        return Array.isArray(data) ? data : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+async function renderWorkOrders() {
+    const tbody = document.getElementById('workorder-table-body');
+    const empty = document.getElementById('workorder-empty');
+    if (!tbody) return;
+
+    const rows = await getWorkOrders(200, 0);
+    tbody.innerHTML = '';
+
+    if (!rows.length) {
+        if (empty) empty.style.display = 'block';
+        return;
+    }
+    if (empty) empty.style.display = 'none';
+
+    tbody.innerHTML = rows.map(r => {
+        const id = Number(r.id || 0);
+        const status = String(r.status || 'Draft');
+        const badgeClass =
+            status === 'Completed' ? 'rop-badge rop-badge--success' :
+            status === 'Cancelled' ? 'rop-badge rop-badge--danger' :
+            status === 'In Progress' ? 'rop-badge' :
+            status === 'Released' ? 'rop-badge' :
+            'rop-badge';
+
+        return `
+            <tr>
+                <td>${r.created_at || '-'}</td>
+                <td>${r.perusahaan || '-'}</td>
+                <td>${r.barang || '-'}</td>
+                <td>${(r.target_month || '').slice(0, 10) || '-'}</td>
+                <td>${Number(r.planned_qty || 0).toLocaleString('id-ID')} ${String(r.unit || '').trim()}</td>
+                <td><span class="${badgeClass}">${status}</span></td>
+                <td>
+                    <button class="btn-table" onclick="openWorkOrderModal(${id})">Buka</button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+async function readApiErrorMessage(response) {
+    try {
+        const cloned = response.clone();
+        try {
+            const data = await response.json();
+            const msg = (data && typeof data.message === 'string') ? data.message.trim() : '';
+            const url = String(response?.url || '').trim();
+            if (msg) return url ? `${msg} (URL: ${url})` : msg;
+            return url ? `HTTP ${response.status} (URL: ${url})` : `HTTP ${response.status}`;
+        } catch {
+            const text = await cloned.text().catch(() => '');
+            const snippet = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+            const url = String(response?.url || '').trim();
+            if (snippet) return url ? `HTTP ${response.status} (URL: ${url}): ${snippet}` : `HTTP ${response.status}: ${snippet}`;
+            return url ? `HTTP ${response.status} (URL: ${url})` : `HTTP ${response.status}`;
+        }
+    } catch {
+        return `HTTP ${response?.status || 'error'}`;
+    }
+}
+
+function _escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function closeWorkOrderModal() {
+    const modal = document.getElementById('workorder-modal');
+    if (modal) modal.style.display = 'none';
+    activeWorkOrderModal = null;
+}
+
+async function openWorkOrderModal(id) {
+    const woId = Number(id || 0);
+    if (!woId) return;
+
+    const modal = document.getElementById('workorder-modal');
+    const body = document.getElementById('workorder-modal-body');
+    if (!modal || !body) return;
+
+    body.innerHTML = 'Memuat...';
+    modal.style.display = 'block';
+
+    try {
+        const response = await fetchApiWithFallback(`/api/work-orders/${encodeURIComponent(String(woId))}`);
+        if (!response.ok) {
+            const msg = await readApiErrorMessage(response);
+            body.innerHTML = _escapeHtml(msg || 'Gagal memuat work order.');
+            return;
+        }
+
+        const data = await response.json().catch(() => ({}));
+        const wo = data.work_order || {};
+        activeWorkOrderModal = { id: woId, wo };
+
+        const status = String(wo.status || 'Draft');
+        const due = String(wo.due_date || '').slice(0, 10);
+        const notes = String(wo.notes || '');
+        const instr = String(wo.instructions || '');
+        const qtyText = `${Number(wo.planned_qty || 0).toLocaleString('id-ID')} ${String(wo.unit || '').trim()}`.trim();
+
+        body.innerHTML = `
+            <div class="form-container">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>ID</label>
+                        <input type="text" id="wo-m-id" value="${_escapeHtml(String(wo.id || woId))}" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label>Tanggal</label>
+                        <input type="text" id="wo-m-created" value="${_escapeHtml(String(wo.created_at || '-'))}" readonly>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Perusahaan</label>
+                        <input type="text" id="wo-m-perusahaan" value="${_escapeHtml(String(wo.perusahaan || ''))}" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label>Barang</label>
+                        <input type="text" id="wo-m-barang" value="${_escapeHtml(String(wo.barang || ''))}" readonly>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Target Bulan</label>
+                        <input type="text" id="wo-m-target" value="${_escapeHtml(String(wo.target_month || '').slice(0, 10))}" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label>Qty Produksi</label>
+                        <input type="text" id="wo-m-qty" value="${_escapeHtml(qtyText)}" readonly>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Status</label>
+                        <select id="wo-m-status" class="status-toggle">
+                            <option value="Draft">Draft</option>
+                            <option value="Released">Released</option>
+                            <option value="In Progress">In Progress</option>
+                            <option value="Completed">Completed</option>
+                            <option value="Cancelled">Cancelled</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Due Date</label>
+                        <input type="date" id="wo-m-due-date" value="${_escapeHtml(due)}">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Catatan</label>
+                        <input type="text" id="wo-m-notes" value="${_escapeHtml(notes)}" placeholder="Catatan tambahan (opsional)">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Instruksi</label>
+                        <pre id="wo-m-instructions" style="white-space: pre-wrap; background: var(--bg-main); border: 1px solid var(--glass-border); padding: 1rem; border-radius: var(--radius-lg); font-weight: 700; line-height: 1.5;">${_escapeHtml(instr || '-')}</pre>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        const statusSelect = document.getElementById('wo-m-status');
+        if (statusSelect) statusSelect.value = status;
+
+        if (!modal.dataset.bound) {
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) closeWorkOrderModal();
+            });
+            modal.dataset.bound = '1';
+        }
+    } catch (e) {
+        body.innerHTML = _escapeHtml('Terjadi kesalahan jaringan saat memuat work order.');
+    }
+}
+
+async function saveWorkOrderModal() {
+    const id = Number(activeWorkOrderModal?.id || 0);
+    if (!id) return;
+
+    const status = (document.getElementById('wo-m-status')?.value || '').trim();
+    const due_date = (document.getElementById('wo-m-due-date')?.value || '').trim();
+    const notes = (document.getElementById('wo-m-notes')?.value || '').trim();
+
+    try {
+        const token = sessionStorage.getItem('gudang_token') || '';
+        const response = await fetchApiWithFallback(`/api/work-orders/${encodeURIComponent(String(id))}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token },
+            body: JSON.stringify({ status, due_date: due_date || null, notes })
+        });
+        if (!response.ok) {
+            const msg = await readApiErrorMessage(response);
+            return showToast(msg || 'Gagal menyimpan work order.', 'error');
+        }
+        const data = await response.json().catch(() => ({}));
+        const instr = String(data.instructions || '').trim();
+        const pre = document.getElementById('wo-m-instructions');
+        if (pre && instr) pre.textContent = instr;
+        showToast('Work order tersimpan.', 'success');
+        await renderWorkOrders();
+    } catch (e) {
+        showToast('Terjadi kesalahan jaringan saat menyimpan work order.', 'error');
+    }
+}
+
+function printWorkOrderModal() {
+    const id = Number(activeWorkOrderModal?.id || 0);
+    if (!id) return;
+
+    const perusahaan = document.getElementById('wo-m-perusahaan')?.value || '';
+    const barang = document.getElementById('wo-m-barang')?.value || '';
+    const target = document.getElementById('wo-m-target')?.value || '';
+    const qty = document.getElementById('wo-m-qty')?.value || '';
+    const status = document.getElementById('wo-m-status')?.value || '';
+    const due = document.getElementById('wo-m-due-date')?.value || '';
+    const notes = document.getElementById('wo-m-notes')?.value || '';
+    const instr = document.getElementById('wo-m-instructions')?.textContent || '';
+
+    const html = `
+        <!doctype html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <title>WO-${_escapeHtml(String(id))}</title>
+            <style>
+                body { font-family: Arial, sans-serif; padding: 24px; color: #111; }
+                h1 { font-size: 18px; margin: 0 0 12px 0; }
+                .meta { margin-bottom: 14px; }
+                .row { display: flex; gap: 18px; margin: 6px 0; }
+                .item { flex: 1; }
+                .label { font-size: 12px; color: #444; font-weight: 700; margin-bottom: 2px; }
+                .val { font-size: 13px; }
+                pre { white-space: pre-wrap; border: 1px solid #ccc; padding: 12px; border-radius: 8px; font-size: 12px; line-height: 1.5; }
+                @media print { body { padding: 0; } }
+            </style>
+        </head>
+        <body>
+            <h1>WORK ORDER PRODUKSI</h1>
+            <div class="meta">
+                <div class="row">
+                    <div class="item"><div class="label">WO ID</div><div class="val">${_escapeHtml(String(id))}</div></div>
+                    <div class="item"><div class="label">Status</div><div class="val">${_escapeHtml(String(status))}</div></div>
+                </div>
+                <div class="row">
+                    <div class="item"><div class="label">Perusahaan</div><div class="val">${_escapeHtml(String(perusahaan))}</div></div>
+                    <div class="item"><div class="label">Barang</div><div class="val">${_escapeHtml(String(barang))}</div></div>
+                </div>
+                <div class="row">
+                    <div class="item"><div class="label">Target Bulan</div><div class="val">${_escapeHtml(String(target))}</div></div>
+                    <div class="item"><div class="label">Qty Produksi</div><div class="val">${_escapeHtml(String(qty))}</div></div>
+                </div>
+                <div class="row">
+                    <div class="item"><div class="label">Due Date</div><div class="val">${_escapeHtml(String(due || '-'))}</div></div>
+                    <div class="item"><div class="label">Catatan</div><div class="val">${_escapeHtml(String(notes || '-'))}</div></div>
+                </div>
+            </div>
+            <div class="label">Instruksi</div>
+            <pre>${_escapeHtml(instr || '')}</pre>
+            <script>window.focus(); window.print();</script>
+        </body>
+        </html>
+    `;
+
+    const w = window.open('', '_blank');
+    if (!w) {
+        showToast('Popup diblokir browser. Izinkan popup untuk print.', 'error');
+        return;
+    }
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+}
+
+function fillWorkOrderFromLastForecast() {
+    if (!lastForecastResult) {
+        showToast('Belum ada forecast terakhir. Jalankan prediksi di menu Forecast Kebutuhan dulu.', 'error');
+        return;
+    }
+
+    const p = document.getElementById('wo-perusahaan');
+    const b = document.getElementById('wo-barang');
+    const tm = document.getElementById('wo-target-month');
+    const qty = document.getElementById('wo-qty');
+    const unit = document.getElementById('wo-unit');
+
+    if (p) p.value = lastForecastResult.perusahaan || '';
+    if (b) b.value = lastForecastResult.nama_barang || '';
+    if (tm) tm.value = (lastForecastResult.target_month || '').slice(0, 10);
+    if (qty) qty.value = String(Math.max(1, Number(lastForecastResult.needed_stock || 0) || 1));
+    if (unit) unit.value = lastForecastResult.unit || '';
+
+    showToast('Form work order terisi dari forecast terakhir.', 'success');
+}
+
+async function createWorkOrder() {
+    const perusahaan = (document.getElementById('wo-perusahaan')?.value || '').trim();
+    const barang = (document.getElementById('wo-barang')?.value || '').trim();
+    const target_month = (document.getElementById('wo-target-month')?.value || '').trim();
+    const qtyRaw = document.getElementById('wo-qty')?.value;
+    const unit = (document.getElementById('wo-unit')?.value || '').trim();
+    const due_date = (document.getElementById('wo-due-date')?.value || '').trim();
+    const notes = (document.getElementById('wo-notes')?.value || '').trim();
+
+    const planned_qty = parseInt(String(qtyRaw || '0'), 10);
+    if (!perusahaan || !barang) return showToast('Isi perusahaan dan barang (ambil dari forecast).', 'error');
+    if (!Number.isFinite(planned_qty) || planned_qty <= 0) return showToast('Qty produksi harus lebih dari 0.', 'error');
+
+    try {
+        const token = sessionStorage.getItem('gudang_token') || '';
+        const response = await fetchApiWithFallback(`/api/work-orders`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token },
+            body: JSON.stringify({
+                perusahaan,
+                barang,
+                target_month: target_month || null,
+                planned_qty,
+                unit,
+                due_date: due_date || null,
+                notes,
+                lead_time: lastForecastResult?.lead_time ?? null,
+                service_level: lastForecastResult?.service_level ?? null
+            })
+        });
+
+        if (!response.ok) {
+            const msg = await readApiErrorMessage(response);
+            return showToast(msg || 'Gagal membuat work order.', 'error');
+        }
+
+        const data = await response.json().catch(() => ({}));
+        showToast('Work order berhasil dibuat.', 'success');
+        await renderWorkOrders();
+        const newId = Number(data.id || 0);
+        if (newId) {
+            await openWorkOrderModal(newId);
+        }
+    } catch (e) {
+        console.error('Create WO error:', e);
+        showToast('Terjadi kesalahan jaringan saat membuat work order.', 'error');
+    }
+}
+
+async function showWorkOrderDetail(id) {
+    const woId = Number(id || 0);
+    if (!woId) return;
+    try {
+        const response = await fetchApiWithFallback(`/api/work-orders/${encodeURIComponent(String(woId))}`);
+        if (!response.ok) {
+            const msg = await readApiErrorMessage(response);
+            return showToast(msg || 'Gagal mengambil detail work order.', 'error');
+        }
+        const data = await response.json().catch(() => ({}));
+        const wo = data.work_order || {};
+        const instr = String(wo.instructions || '').trim();
+        if (!instr) return showToast('Instruksi work order belum tersedia.', 'error');
+        window.prompt('Instruksi Work Order (salin jika perlu):', instr);
+    } catch (e) {
+        showToast('Terjadi kesalahan jaringan saat mengambil detail work order.', 'error');
+    }
+}
+
+async function updateWorkOrderStatus(id, currentStatus = 'Draft') {
+    const woId = Number(id || 0);
+    if (!woId) return;
+    const next = window.prompt("Update status (Draft / Released / In Progress / Completed / Cancelled):", String(currentStatus || 'Draft'));
+    if (next === null) return;
+    const status = String(next || '').trim();
+    if (!status) return showToast('Status tidak boleh kosong.', 'error');
+
+    try {
+        const token = sessionStorage.getItem('gudang_token') || '';
+        const response = await fetchApiWithFallback(`/api/work-orders/${encodeURIComponent(String(woId))}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token },
+            body: JSON.stringify({ status })
+        });
+        if (!response.ok) {
+            const msg = await readApiErrorMessage(response);
+            return showToast(msg || 'Gagal update status work order.', 'error');
+        }
+        await response.json().catch(() => ({}));
+        showToast('Status work order diperbarui.', 'success');
+        await renderWorkOrders();
+    } catch (e) {
+        showToast('Terjadi kesalahan jaringan saat update status work order.', 'error');
+    }
 }
 
 async function importFromExcel(input) {
@@ -1512,6 +1980,16 @@ async function predictStock() {
         const reorder_point = Number(data.reorder_point || 0);
         const lokasi = data.lokasi || "Belum Ditentukan";
         currentPredictItemId = Number(data.inventory_id || 0) || null;
+        lastForecastResult = {
+            perusahaan: String(data.perusahaan || p),
+            nama_barang: String(data.nama_barang || b),
+            target_month: String(data.target_month || ''),
+            prediction: Number(data.prediction || 0),
+            needed_stock: Number(data.needed_stock || 0),
+            unit: String(data.unit || s || ''),
+            lead_time: Number(data.lead_time || lead_time),
+            service_level: Number(data.service_level || service_level)
+        };
 
         const isHistoryEmpty = Boolean(data.cold_start);
         const reorderNeeded = Boolean(data.reorder_needed);

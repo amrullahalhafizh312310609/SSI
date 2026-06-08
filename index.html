@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gudang PT. SEIGO SELARAS INDONESIA</title>
+    <title>PT. SEIGO SELARAS INDONESIA</title>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="static/style.css?v=2.3">
+    <link rel="stylesheet" href="static/style.css?v=2.7">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
@@ -27,10 +27,9 @@
         <div class="login-card glassmorphism">
             <div class="login-header">
                 <div class="brand-icon">
-                    <i class="fas fa-warehouse"></i>
+                    <img src="static/logo-seigo.png" alt="SEIGO">
                 </div>
                 <h2>PT. SEIGO SELARAS INDONESIA</h2>
-                <p>Silakan masuk untuk mengelola inventori</p>
             </div>
             <div class="login-form">
                 <div class="form-group">
@@ -49,7 +48,7 @@
                 </div>
                 <button class="btn-primary" onclick="handleLogin()">
                     <i class="fas fa-sign-in-alt"></i>
-                    <span>Masuk ke Sistem</span>
+                    <span>Masuk</span>
                 </button>
                 <p id="login-error" class="error-text" style="display: none;">Username atau password salah!</p>
             </div>
@@ -62,17 +61,18 @@
             <div class="sidebar-header">
                 <div class="brand">
                     <div class="brand-icon">
-                        <i class="fas fa-warehouse"></i>
+                        <img src="static/logo-seigo.png" alt="SEIGO">
                     </div>
-                    <span>Gudang PT. SSI</span>
+                    <span>PT. SSI</span>
                 </div>
             </div>
             
             <nav class="sidebar-nav">
                 <div class="nav-label">Menu Utama</div>
                 <ul>
-                    <li id="nav-dashboard" class="active"><a href="#" onclick="showSection('dashboard')"><i class="fas fa-th-large"></i> <span>Dashboard</span></a></li>
-                    <li id="nav-inventory"><a href="#" onclick="showSection('inventory')"><i class="fas fa-box-open"></i> <span>Inventori</span></a></li>
+                    <li id="nav-dashboard" class="active"><a href="#" onclick="showSection('dashboard')"><i class="fas fa-chart-line"></i> <span>Forecast Kebutuhan</span></a></li>
+                    <li id="nav-planning"><a href="#" onclick="showSection('planning')"><i class="fas fa-industry"></i> <span>Perencanaan Produksi</span></a></li>
+                    <li id="nav-inventory"><a href="#" onclick="showSection('inventory')"><i class="fas fa-box-open"></i> <span>Data Stok</span></a></li>
                     <li id="nav-predictions"><a href="#" onclick="showSection('predictions')"><i class="fas fa-chart-line"></i> <span>Laporan Prediksi</span></a></li>
                 </ul>
 
@@ -84,9 +84,9 @@
 
             <div class="sidebar-footer">
                 <div class="user-card">
-                    <img src="https://ui-avatars.com/api/?name=Admin+Gudang&background=4f46e5&color=fff" alt="User">
+                    <img src="https://ui-avatars.com/api/?name=Admin+PPIC&background=4f46e5&color=fff" alt="User">
                     <div class="user-info">
-                        <div class="user-name">Admin Gudang</div>
+                        <div class="user-name">Admin PPIC</div>
                         <div class="user-role">Super Admin</div>
                     </div>
                 </div>
@@ -189,7 +189,7 @@
                     <div class="card glassmorphism" style="margin-bottom: 2rem;">
                         <div class="card-header">
                             <div class="header-icon"><i class="fas fa-chart-line"></i></div>
-                            <h3>Grafik Barang Keluar (7 Hari Terakhir)</h3>
+                            <h3>Tren Permintaan (12 Bulan Terakhir)</h3>
                         </div>
                         <div class="chart-box">
                             <canvas id="transactionChart"></canvas>
@@ -382,27 +382,100 @@
                         </div>
                     </div>
 
-                    <div class="dashboard-grid single-col">
-                        <!-- Layout Recommendation Section -->
-                        <div class="card glassmorphism">
-                            <div class="card-header">
-                                <div class="header-icon"><i class="fas fa-warehouse"></i></div>
-                                <h3>Rekomendasi Tata Letak</h3>
+                    <div class="dashboard-grid single-col"></div>
+                </section>
+
+                <section id="section-planning" class="app-section" style="display: none;">
+                    <div class="section-header">
+                        <div class="header-with-action">
+                            <div>
+                                <h1>Perencanaan <span class="text-gradient">Produksi</span></h1>
+                                <p>Gunakan hasil forecast kebutuhan untuk menyusun rencana produksi dan pengadaan.</p>
                             </div>
-                            <div class="layout-editor-box">
-                                <div class="layout-text">
-                                    <p>Atur posisi penyimpanan optimal.</p>
-                                    <div class="layout-input-group">
-                                        <input type="text" id="new-location-input" placeholder="Contoh: A-01...">
-                                        <button class="btn-save-layout" onclick="saveNewLayout()">
-                                            <i class="fas fa-save"></i> Simpan
-                                        </button>
-                                    </div>
+                        </div>
+                    </div>
+                    <div class="card glassmorphism" style="margin-bottom: 2rem;">
+                        <div class="card-header">
+                            <div class="header-icon"><i class="fas fa-clipboard-check"></i></div>
+                            <h3>Work Order Produksi</h3>
+                        </div>
+                        <div class="form-container">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Perusahaan</label>
+                                    <input type="text" id="wo-perusahaan" placeholder="PT. ..." readonly>
                                 </div>
-                                <div class="layout-visual-hint" onclick="openShelfVisualization()">
-                                    <i class="fas fa-th"></i>
-                                    <span>Visual Rak</span>
+                                <div class="form-group">
+                                    <label>Barang</label>
+                                    <input type="text" id="wo-barang" placeholder="Nama barang" readonly>
                                 </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Target Bulan</label>
+                                    <input type="text" id="wo-target-month" placeholder="YYYY-MM-01" readonly>
+                                </div>
+                                <div class="form-group">
+                                    <label>Qty Produksi</label>
+                                    <input type="number" id="wo-qty" placeholder="0" min="1">
+                                </div>
+                                <div class="form-group">
+                                    <label>Satuan</label>
+                                    <input type="text" id="wo-unit" list="unit-options" placeholder="pcs / kg / roll">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Due Date</label>
+                                    <input type="date" id="wo-due-date">
+                                </div>
+                                <div class="form-group">
+                                    <label>Catatan</label>
+                                    <input type="text" id="wo-notes" placeholder="Catatan tambahan (opsional)">
+                                </div>
+                            </div>
+                            <div class="form-actions" style="margin-top: 1rem; display: flex; gap: 10px; flex-wrap: wrap;">
+                                <button class="btn-primary" onclick="fillWorkOrderFromLastForecast()" style="width: auto;">
+                                    <i class="fas fa-wand-magic-sparkles"></i> Ambil dari Forecast Terakhir
+                                </button>
+                                <button class="btn-primary" onclick="createWorkOrder()" style="width: auto;">
+                                    <i class="fas fa-plus"></i> Buat Work Order
+                                </button>
+                                <button class="btn-text" onclick="showSection('dashboard')" style="width: auto;">
+                                    <i class="fas fa-chart-line"></i> Buka Forecast Kebutuhan
+                                </button>
+                                <button class="btn-text" onclick="showSection('predictions')" style="width: auto;">
+                                    <i class="fas fa-file-alt"></i> Buka Laporan Prediksi
+                                </button>
+                                <button class="btn-text" onclick="showSection('inventory')" style="width: auto;">
+                                    <i class="fas fa-box-open"></i> Buka Data Stok
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card glassmorphism">
+                        <div class="card-header">
+                            <div class="header-icon"><i class="fas fa-list-check"></i></div>
+                            <h3>Daftar Work Order</h3>
+                        </div>
+                        <div class="table-container">
+                            <table class="modern-table">
+                                <thead>
+                                    <tr>
+                                        <th>Tanggal</th>
+                                        <th>Perusahaan</th>
+                                        <th>Barang</th>
+                                        <th>Target</th>
+                                        <th>Qty</th>
+                                        <th>Status</th>
+                                        <th>Aksi</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="workorder-table-body"></tbody>
+                            </table>
+                            <div id="workorder-empty" class="empty-state" style="display:none;">
+                                Belum ada work order.
                             </div>
                         </div>
                     </div>
@@ -413,8 +486,8 @@
                     <div class="section-header">
                         <div class="header-with-action">
                                 <div>
-                                    <h1>Status <span class="text-gradient">Inventori Aktif</span></h1>
-                                    <p>Kelola ketersediaan barang dan update status stok secara instan.</p>
+                                    <h1>Data <span class="text-gradient">Stok</span></h1>
+                                    <p>Data stok dan transaksi digunakan sebagai input untuk forecast kebutuhan PPIC.</p>
                                 </div>
                                 <div class="header-buttons">
                                      <button class="btn-primary btn-small" onclick="toggleAddForm()">
@@ -617,25 +690,6 @@
         </main>
     </div>
 
-    <!-- Shelf Visualization Modal -->
-    <div id="shelf-modal" class="modal">
-        <div class="modal-content glassmorphism">
-            <div class="modal-header">
-                <h3>Visualisasi Rak Gudang</h3>
-                <span class="close" onclick="closeShelfVisualization()">&times;</span>
-            </div>
-            <div class="shelf-grid-container">
-                <div class="shelf-legend">
-                    <div class="legend-item"><span class="dot occupied"></span> Terisi</div>
-                    <div class="legend-item"><span class="dot empty"></span> Kosong</div>
-                </div>
-                <div class="warehouse-grid" id="warehouse-grid">
-                    <!-- Grid generated by JS -->
-                </div>
-            </div>
-        </div>
-    </div>
-
     <datalist id="unit-options">
         <option value="pcs"></option>
         <option value="kg"></option>
@@ -645,9 +699,24 @@
         <option value="set"></option>
     </datalist>
 
+    <div id="workorder-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Work Order Produksi</h3>
+                <span class="close" onclick="closeWorkOrderModal()">&times;</span>
+            </div>
+            <div id="workorder-modal-body" style="margin-top: 1rem;"></div>
+            <div class="form-actions">
+                <button class="btn-text" type="button" onclick="closeWorkOrderModal()">Tutup</button>
+                <button class="btn-primary" type="button" onclick="saveWorkOrderModal()" style="width:auto;">Simpan</button>
+                <button class="btn-primary" type="button" onclick="printWorkOrderModal()" style="width:auto;">Print</button>
+            </div>
+        </div>
+    </div>
+
     <div id="toast-container" class="toast-container"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="static/script.js?v=1.7"></script>
+    <script src="static/script.js?v=1.8"></script>
 </body>
 </html>

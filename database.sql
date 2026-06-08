@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS transactions (
     company_name VARCHAR(255) NOT NULL,
     item_name VARCHAR(255) NOT NULL,
     unit VARCHAR(50) NOT NULL,
-    qty_out INT NOT NULL,
+    qty_out INT NOT NULL DEFAULT 0,
+    qty_in INT NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -51,4 +52,21 @@ CREATE TABLE IF NOT EXISTS prediction_logs (
     mae DOUBLE NULL,
     rmse DOUBLE NULL,
     r2 DOUBLE NULL
+);
+
+CREATE TABLE IF NOT EXISTS work_orders (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    company_name VARCHAR(255) NOT NULL,
+    item_name VARCHAR(255) NOT NULL,
+    target_month DATE NULL,
+    planned_qty INT NOT NULL,
+    unit VARCHAR(50) NULL,
+    lead_time INT NULL,
+    service_level DOUBLE NULL,
+    prediction_log_id BIGINT NULL,
+    status ENUM('Draft', 'Released', 'In Progress', 'Completed', 'Cancelled') DEFAULT 'Draft',
+    due_date DATE NULL,
+    notes TEXT NULL,
+    instructions TEXT NULL
 );

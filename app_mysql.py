@@ -19,6 +19,7 @@ except Exception:
 
 app = Flask(__name__, static_folder='static')
 CORS(app) # Mengizinkan akses dari domain lain (seperti GitHub Pages)
+app.url_map.strict_slashes = False
 
 # Konfigurasi Database MySQL
 DB_CONFIG = {
@@ -114,6 +115,90 @@ def _ensure_prediction_logs_table(cursor):
             cursor.execute("ALTER TABLE prediction_logs ADD COLUMN accuracy DOUBLE NULL")
     except Exception:
         return
+
+def _ensure_work_orders_table(cursor):
+    try:
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS work_orders (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                company_name VARCHAR(255) NOT NULL,
+                item_name VARCHAR(255) NOT NULL,
+                target_month DATE NULL,
+                planned_qty INT NOT NULL,
+                unit VARCHAR(50) NULL,
+                lead_time INT NULL,
+                service_level DOUBLE NULL,
+                prediction_log_id BIGINT NULL,
+                status ENUM('Draft', 'Released', 'In Progress', 'Completed', 'Cancelled') DEFAULT 'Draft',
+                due_date DATE NULL,
+                notes TEXT NULL,
+                instructions TEXT NULL
+            )
+            """.strip()
+        )
+    except Exception:
+        return
+
+def _build_work_order_instructions(company_name: str, item_name: str, planned_qty: int, unit: str, target_month_iso: str, due_date_iso: str):
+    company_name = (company_name or "").strip()
+    item_name = (item_name or "").strip()
+    unit = (unit or "").strip()
+    header = f"WORK ORDER PRODUKSI\nPerusahaan: {company_name}\nBarang: {item_name}"
+    lines = [
+        header,
+        f"Target Bulan: {target_month_iso or '-'}",
+        f"Qty Produksi: {planned_qty} {unit}".strip(),
+        f"Due Date: {due_date_iso or '-'}",
+        "",
+        "Instruksi Pelaksanaan:",
+        "1) Validasi kebutuhan",
+        "   - Pastikan forecast & kebutuhan produksi sudah disetujui.",
+        "   - Pastikan qty produksi mencukupi kebutuhan.",
+        "2) Cek ketersediaan bahan/komponen",
+        "   - Verifikasi stok bahan baku dan/atau komponen pendukung.",
+        "   - Jika kurang, buat permintaan pengadaan/pemenuhan.",
+        "3) Penjadwalan produksi",
+        "   - Tentukan tanggal mulai & shift produksi.",
+        "   - Pastikan mesin, tooling, dan operator tersedia.",
+        "4) Pelaksanaan produksi",
+        "   - Produksi sesuai SOP dan target qty.",
+        "   - Catat output per batch/shift.",
+        "5) QC/Inspeksi",
+        "   - Lakukan pemeriksaan kualitas sesuai standar.",
+        "   - Pisahkan NG/Reject dan buat laporan bila ada.",
+        "6) Serah terima hasil produksi",
+        "   - Update stok barang masuk melalui fitur Barang Masuk.",
+        "   - Pastikan transaksi tercatat untuk evaluasi forecast berikutnya.",
+    ]
+    return "\n".join(lines)
+
+def _parse_iso_date(value):
+    if value is None:
+        return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if not isinstance(value, str):
+        return None
+    s = value.strip()
+    if not s:
+        return None
+    try:
+        return datetime.strptime(s[:10], "%Y-%m-%d").date().isoformat()
+    except Exception:
+        return None
+
+def _normalize_work_order_status(value: str):
+    allowed = {'Draft', 'Released', 'In Progress', 'Completed', 'Cancelled'}
+    if not value:
+        return None
+    s = str(value).strip()
+    if s in allowed:
+        return s
+    return None
 
 def _month_start(d: date) -> date:
     return date(d.year, d.month, 1)
@@ -863,6 +948,268 @@ def get_predictions():
         return jsonify(rows)
     except Exception:
         return jsonify([])
+    finally:
+        if cursor:
+            cursor.close()
+        conn.close()
+
+@app.route('/api/work-orders', methods=['GET'])
+def get_work_orders():
+    try:
+        limit_raw = request.args.get('limit')
+        offset_raw = request.args.get('offset')
+        limit = int(limit_raw) if limit_raw is not None else 100
+        offset = int(offset_raw) if offset_raw is not None else 0
+    except Exception:
+        limit = 100
+        offset = 0
+
+    if limit <= 0:
+        limit = 100
+    if limit > 500:
+        limit = 500
+    if offset < 0:
+        offset = 0
+
+    conn = get_db_connection()
+    if not conn:
+        return jsonify([])
+
+    cursor = None
+    try:
+        cursor = conn.cursor(dictionary=True)
+        _ensure_work_orders_table(cursor)
+        cursor.execute(
+            """
+            SELECT
+                id,
+                created_at,
+                company_name as perusahaan,
+                item_name as barang,
+                DATE_FORMAT(target_month, '%Y-%m-%d') as target_month,
+                planned_qty,
+                unit,
+                status,
+                DATE_FORMAT(due_date, '%Y-%m-%d') as due_date
+            FROM work_orders
+            ORDER BY created_at DESC, id DESC
+            LIMIT %s OFFSET %s
+            """.strip(),
+            (limit, offset)
+        )
+        rows = cursor.fetchall()
+        for r in rows:
+            if r.get('created_at') is not None:
+                r['created_at'] = str(r['created_at'])
+        return jsonify(rows)
+    except Exception:
+        return jsonify([])
+    finally:
+        if cursor:
+            cursor.close()
+        conn.close()
+
+@app.route('/api/work-orders/<int:wo_id>', methods=['GET'])
+def get_work_order_detail(wo_id: int):
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({"status": "error", "message": "Database connection failed"}), 500
+
+    cursor = None
+    try:
+        cursor = conn.cursor(dictionary=True)
+        _ensure_work_orders_table(cursor)
+        cursor.execute(
+            """
+            SELECT
+                id,
+                created_at,
+                company_name as perusahaan,
+                item_name as barang,
+                DATE_FORMAT(target_month, '%Y-%m-%d') as target_month,
+                planned_qty,
+                unit,
+                lead_time,
+                service_level,
+                prediction_log_id,
+                status,
+                DATE_FORMAT(due_date, '%Y-%m-%d') as due_date,
+                notes,
+                instructions
+            FROM work_orders
+            WHERE id = %s
+            """.strip(),
+            (wo_id,)
+        )
+        row = cursor.fetchone()
+        if not row:
+            return jsonify({"status": "error", "message": "Work order tidak ditemukan"}), 404
+        if row.get('created_at') is not None:
+            row['created_at'] = str(row['created_at'])
+        return jsonify({"status": "success", "work_order": row})
+    except Error as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+    finally:
+        if cursor:
+            cursor.close()
+        conn.close()
+
+@app.route('/api/work-orders', methods=['POST'])
+def create_work_order():
+    auth_err = _require_auth()
+    if auth_err:
+        return auth_err
+
+    payload = request.json or {}
+    perusahaan = (payload.get('perusahaan') or payload.get('company_name') or '').strip()
+    barang = (payload.get('barang') or payload.get('item_name') or '').strip()
+    unit = (payload.get('unit') or payload.get('satuan') or '').strip()
+    notes = (payload.get('notes') or payload.get('catatan') or '').strip()
+
+    planned_qty = _safe_int(payload.get('planned_qty'))
+    if planned_qty is None:
+        planned_qty = _safe_int(payload.get('qty'))
+
+    if not perusahaan or not barang:
+        return jsonify({"status": "error", "message": "perusahaan dan barang wajib diisi"}), 400
+    if planned_qty is None or planned_qty <= 0:
+        return jsonify({"status": "error", "message": "planned_qty harus lebih dari 0"}), 400
+
+    target_month_iso = _parse_iso_date(payload.get('target_month'))
+    due_date_iso = _parse_iso_date(payload.get('due_date'))
+
+    lead_time = _safe_int(payload.get('lead_time'))
+    service_level = _safe_float(payload.get('service_level'))
+    prediction_log_id = _safe_int(payload.get('prediction_log_id'))
+
+    status_val = _normalize_work_order_status(payload.get('status')) or 'Draft'
+
+    instructions = _build_work_order_instructions(
+        company_name=perusahaan,
+        item_name=barang,
+        planned_qty=int(planned_qty),
+        unit=unit,
+        target_month_iso=target_month_iso,
+        due_date_iso=due_date_iso
+    )
+
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({"status": "error", "message": "Database connection failed"}), 500
+
+    cursor = None
+    try:
+        cursor = conn.cursor()
+        _ensure_work_orders_table(cursor)
+        cursor.execute(
+            """
+            INSERT INTO work_orders
+                (company_name, item_name, target_month, planned_qty, unit, lead_time, service_level, prediction_log_id, status, due_date, notes, instructions)
+            VALUES
+                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """.strip(),
+            (
+                perusahaan,
+                barang,
+                target_month_iso[:10] if target_month_iso else None,
+                int(planned_qty),
+                unit if unit else None,
+                int(lead_time) if lead_time is not None else None,
+                float(service_level) if service_level is not None else None,
+                int(prediction_log_id) if prediction_log_id is not None else None,
+                status_val,
+                due_date_iso[:10] if due_date_iso else None,
+                notes if notes else None,
+                instructions
+            )
+        )
+        wo_id = cursor.lastrowid
+        conn.commit()
+        return jsonify({"status": "success", "id": wo_id, "instructions": instructions})
+    except Error as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+    finally:
+        if cursor:
+            cursor.close()
+        conn.close()
+
+@app.route('/api/work-orders/<int:wo_id>', methods=['PATCH'])
+def update_work_order(wo_id: int):
+    auth_err = _require_auth()
+    if auth_err:
+        return auth_err
+
+    payload = request.json or {}
+    status_val = _normalize_work_order_status(payload.get('status'))
+    due_date_iso = _parse_iso_date(payload.get('due_date'))
+    notes = payload.get('notes')
+    if isinstance(notes, str):
+        notes = notes.strip()
+
+    updates = []
+    params = []
+    if status_val:
+        updates.append("status = %s")
+        params.append(status_val)
+    if due_date_iso is not None:
+        updates.append("due_date = %s")
+        params.append(due_date_iso[:10] if due_date_iso else None)
+    if notes is not None:
+        updates.append("notes = %s")
+        params.append(notes if notes else None)
+
+    if not updates:
+        return jsonify({"status": "error", "message": "Tidak ada field yang diupdate"}), 400
+
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({"status": "error", "message": "Database connection failed"}), 500
+
+    cursor = None
+    try:
+        cursor = conn.cursor(dictionary=True)
+        _ensure_work_orders_table(cursor)
+        cursor.execute(
+            "SELECT company_name, item_name, planned_qty, unit, DATE_FORMAT(target_month, '%Y-%m-%d') as target_month FROM work_orders WHERE id = %s",
+            (wo_id,)
+        )
+        base = cursor.fetchone()
+        if not base:
+            return jsonify({"status": "error", "message": "Work order tidak ditemukan"}), 404
+
+        cursor2 = conn.cursor()
+        cursor2.execute(
+            f"UPDATE work_orders SET {', '.join(updates)} WHERE id = %s",
+            tuple(params + [wo_id])
+        )
+        if cursor2.rowcount <= 0:
+            cursor2.close()
+            return jsonify({"status": "error", "message": "Work order tidak ditemukan"}), 404
+        cursor2.close()
+
+        cursor.execute(
+            "SELECT DATE_FORMAT(due_date, '%Y-%m-%d') as due_date FROM work_orders WHERE id = %s",
+            (wo_id,)
+        )
+        after = cursor.fetchone() or {}
+        due_date_after = after.get('due_date')
+
+        instructions = _build_work_order_instructions(
+            company_name=base.get('company_name') or '',
+            item_name=base.get('item_name') or '',
+            planned_qty=int(base.get('planned_qty') or 0),
+            unit=base.get('unit') or '',
+            target_month_iso=base.get('target_month'),
+            due_date_iso=due_date_after
+        )
+        cursor2 = conn.cursor()
+        cursor2.execute("UPDATE work_orders SET instructions = %s WHERE id = %s", (instructions, wo_id))
+        cursor2.close()
+
+        conn.commit()
+        return jsonify({"status": "success", "id": wo_id, "instructions": instructions})
+    except Error as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
     finally:
         if cursor:
             cursor.close()
