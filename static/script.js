@@ -1,4 +1,3 @@
-
 const initialInventory = [];
 
 let currentPredictItemId = null;
@@ -207,10 +206,15 @@ async function fetchApiWithFallback(path, options = {}) {
         if (!candidates.includes(s)) candidates.push(s);
     };
 
-    add(API_BASE_URL);
-    add('');
-    add(LOCAL_API_URL);
-    add(REMOTE_API_URL);
+    // Dari GitHub Pages, hanya gunakan REMOTE_API_URL (Railway)
+    if (isGitHubPages) {
+        add(REMOTE_API_URL);
+    } else {
+        add(API_BASE_URL);
+        add('');
+        add(LOCAL_API_URL);
+        add(REMOTE_API_URL);
+    }
 
     let lastNetworkError = null;
     let lastResponse = null;
@@ -246,16 +250,15 @@ async function getInventory() {
             }
         }
     } catch (e) {
-        console.warn("Backend fetch failed, using LocalStorage:", e);
+        console.warn("Backend fetch failed:", e);
+        if (!_inventoryFetchErrorShown) {
+            _inventoryFetchErrorShown = true;
+            showToast('Tidak bisa mengambil data dari server. Periksa koneksi ke backend Railway.', 'error');
+        }
     }
-    const localData = localStorage.getItem('gudang_inventory');
-    const fallback = localData ? JSON.parse(localData) : initialInventory;
-    if ((!fallback || (Array.isArray(fallback) && fallback.length === 0)) && !_inventoryFetchErrorShown && !isGitHubPages) {
-        _inventoryFetchErrorShown = true;
-        showToast('Tidak bisa mengambil data inventori dari server. Pastikan backend berjalan dan database terhubung.', 'error');
-    }
-    _inventoryMemo = { ts: Date.now(), data: fallback };
-    return fallback;
+    // Jika gagal konek ke Railway, kembalikan array kosong (jangan pakai localStorage sebagai data utama)
+    _inventoryMemo = { ts: Date.now(), data: [] };
+    return [];
 }
 
 async function getHistory(limit = 2000, offset = 0) {
@@ -268,7 +271,6 @@ async function getHistory(limit = 2000, offset = 0) {
         const all = await getHistoryAll();
         const sliced = all.slice(offset, offset + limit);
         historicalData = sliced;
-        localStorage.setItem('gudang_history', JSON.stringify(sliced));
         _historyMemo = { ts: Date.now(), key, data: sliced };
         return sliced;
     }
@@ -280,7 +282,6 @@ async function getHistory(limit = 2000, offset = 0) {
             const all = await getHistoryAll();
             const sliced = all.slice(offset, offset + limit);
             historicalData = sliced;
-            localStorage.setItem('gudang_history', JSON.stringify(sliced));
             _historyMemo = { ts: Date.now(), key, data: sliced };
             return sliced;
         }
@@ -288,7 +289,6 @@ async function getHistory(limit = 2000, offset = 0) {
         const remoteData = await response.json();
         if (Array.isArray(remoteData)) {
             historicalData = remoteData;
-            localStorage.setItem('gudang_history', JSON.stringify(remoteData));
             _historyMemo = { ts: Date.now(), key, data: remoteData };
             return remoteData;
         }
@@ -297,16 +297,15 @@ async function getHistory(limit = 2000, offset = 0) {
         const all = await getHistoryAll();
         const sliced = all.slice(offset, offset + limit);
         historicalData = sliced;
-        localStorage.setItem('gudang_history', JSON.stringify(sliced));
         _historyMemo = { ts: Date.now(), key, data: sliced };
         return sliced;
     } catch (e) {
         console.warn("History fetch failed:", e);
     }
-    const local = localStorage.getItem('gudang_history');
-    historicalData = local ? JSON.parse(local) : [];
-    _historyMemo = { ts: Date.now(), key, data: historicalData };
-    return historicalData;
+    // Jika gagal, kembalikan array kosong (data selalu dari Railway)
+    historicalData = [];
+    _historyMemo = { ts: Date.now(), key, data: [] };
+    return [];
 }
 
 async function getHistoryAll() {
@@ -384,15 +383,12 @@ async function renderRestockList() {
 async function saveInventory(inventory, options = {}) {
     const silent = Boolean(options.silent);
 
+    // Simpan ke memori lokal sebagai cache sementara
     localStorage.setItem('gudang_inventory', JSON.stringify(inventory));
     lastInventoryData = JSON.stringify(inventory);
     _inventoryMemo = { ts: Date.now(), data: inventory };
 
-    if (isGitHubPages) {
-        if (!silent) showToast('Tersimpan di browser (Mode GitHub)', 'info');
-        return true;
-    }
-
+    // Selalu kirim ke database Railway (termasuk dari GitHub Pages)
     try {
         const token = sessionStorage.getItem('gudang_token') || '';
         const response = await fetch(`${API_BASE_URL}/api/inventory`, {
@@ -402,7 +398,7 @@ async function saveInventory(inventory, options = {}) {
         });
 
         if (response.ok) {
-            if (!silent) showToast('Database MySQL berhasil diperbarui!', 'success');
+            if (!silent) showToast('Data berhasil disimpan ke database!', 'success');
             return true;
         }
 
