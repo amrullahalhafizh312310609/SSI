@@ -18,6 +18,21 @@ let inventorySearchTerm = '';
 let lastForecastResult = null;
 let activeWorkOrderModal = null;
 
+// Helper: ambil token dari localStorage atau sessionStorage
+function getAuthToken() {
+    return sessionStorage.getItem('gudang_token') || localStorage.getItem('gudang_token') || '';
+}
+
+// Helper: tangani response Unauthorized - hapus token dan minta login ulang
+function handleUnauthorized() {
+    sessionStorage.removeItem('gudang_token');
+    sessionStorage.removeItem('gudang_isLoggedIn');
+    localStorage.removeItem('gudang_token');
+    localStorage.removeItem('gudang_isLoggedIn');
+    showToast('Sesi habis, silakan login ulang.', 'error');
+    setTimeout(() => location.reload(), 1500);
+}
+
 function showToast(message, type = 'info', title = '') {
     const container = document.getElementById('toast-container');
     if (!container) return;
@@ -145,7 +160,7 @@ async function addHistoryEntryFromUI() {
     };
 
     try {
-        const token = sessionStorage.getItem('gudang_token') || '';
+        const token = getAuthToken();
         const response = await fetch(`${API_BASE_URL}/api/history`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token },
@@ -390,7 +405,7 @@ async function saveInventory(inventory, options = {}) {
 
     // Selalu kirim ke database Railway (termasuk dari GitHub Pages)
     try {
-        const token = sessionStorage.getItem('gudang_token') || '';
+        const token = getAuthToken();
         const response = await fetch(`${API_BASE_URL}/api/inventory`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token },
@@ -400,6 +415,11 @@ async function saveInventory(inventory, options = {}) {
         if (response.ok) {
             if (!silent) showToast('Data berhasil disimpan ke database!', 'success');
             return true;
+        }
+
+        if (response.status === 401) {
+            handleUnauthorized();
+            return false;
         }
 
         const err = await response.json().catch(() => ({}));
@@ -704,8 +724,13 @@ function closeSidebar() {
 // Authentication Logic
 function checkLogin() {
     try {
-        const isLoggedIn = sessionStorage.getItem('gudang_isLoggedIn');
-        const token = sessionStorage.getItem('gudang_token');
+        const isLoggedIn = sessionStorage.getItem('gudang_isLoggedIn') || localStorage.getItem('gudang_isLoggedIn');
+        const token = sessionStorage.getItem('gudang_token') || localStorage.getItem('gudang_token');
+        // Sinkronisasi ke sessionStorage jika ada di localStorage
+        if (token && !sessionStorage.getItem('gudang_token')) {
+            sessionStorage.setItem('gudang_token', token);
+            sessionStorage.setItem('gudang_isLoggedIn', 'true');
+        }
         const loginPage = document.getElementById('login-page');
         const mainApp = document.getElementById('main-app');
 
@@ -750,6 +775,8 @@ function handleLogin() {
 
             const data = await response.json();
             if (data?.token) {
+                localStorage.setItem('gudang_token', data.token);
+                localStorage.setItem('gudang_isLoggedIn', 'true');
                 sessionStorage.setItem('gudang_token', data.token);
                 sessionStorage.setItem('gudang_isLoggedIn', 'true');
                 checkLogin();
@@ -769,6 +796,8 @@ function handleLogin() {
 function handleLogout() {
     sessionStorage.removeItem('gudang_isLoggedIn');
     sessionStorage.removeItem('gudang_token');
+    localStorage.removeItem('gudang_isLoggedIn');
+    localStorage.removeItem('gudang_token');
     location.reload();
 }
 
@@ -1094,7 +1123,7 @@ async function addStockInEntryFromUI() {
     }
 
     try {
-        const token = sessionStorage.getItem('gudang_token') || '';
+        const token = getAuthToken();
         const response = await fetch(`${API_BASE_URL}/api/stock-in`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token },
@@ -1146,7 +1175,7 @@ async function submitNewInventory() {
         if (ok) showToast("Barang berhasil ditambahkan.", "success");
     } else {
         try {
-            const token = sessionStorage.getItem('gudang_token') || '';
+            const token = getAuthToken();
             const response = await fetch(`${API_BASE_URL}/api/inventory/add`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token },
@@ -1193,7 +1222,7 @@ async function deleteInventoryItem(id) {
     }
 
     try {
-        const token = sessionStorage.getItem('gudang_token') || '';
+        const token = getAuthToken();
         const response = await fetch(`${API_BASE_URL}/api/inventory/${encodeURIComponent(String(id))}`, {
             method: 'DELETE',
             headers: { 'X-Auth-Token': token }
@@ -1587,7 +1616,7 @@ async function saveWorkOrderModal() {
     const notes = (document.getElementById('wo-m-notes')?.value || '').trim();
 
     try {
-        const token = sessionStorage.getItem('gudang_token') || '';
+        const token = getAuthToken();
         const response = await fetchApiWithFallback(`/api/work-orders/${encodeURIComponent(String(id))}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token },
@@ -1711,7 +1740,7 @@ async function createWorkOrder() {
     if (!Number.isFinite(planned_qty) || planned_qty <= 0) return showToast('Qty produksi harus lebih dari 0.', 'error');
 
     try {
-        const token = sessionStorage.getItem('gudang_token') || '';
+        const token = getAuthToken();
         const response = await fetchApiWithFallback(`/api/work-orders`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token },
@@ -1774,7 +1803,7 @@ async function updateWorkOrderStatus(id, currentStatus = 'Draft') {
     if (!status) return showToast('Status tidak boleh kosong.', 'error');
 
     try {
-        const token = sessionStorage.getItem('gudang_token') || '';
+        const token = getAuthToken();
         const response = await fetchApiWithFallback(`/api/work-orders/${encodeURIComponent(String(woId))}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token },
