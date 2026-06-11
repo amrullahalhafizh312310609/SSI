@@ -1,3 +1,4 @@
+
 const initialInventory = [];
 
 let currentPredictItemId = null;
@@ -8,6 +9,7 @@ let historicalData = []; // Initialized as empty, will be fetched from server
 const historyStorageKey = 'gudang_history';
 const themeStorageKey = 'gudang_theme';
 let toastTimerId = null;
+const recentToastMap = new Map();
 let showAllHistoryRows = false;
 let _inventoryMemo = { ts: 0, data: null };
 let _historyMemo = { ts: 0, key: '', data: null };
@@ -15,27 +17,79 @@ let _historyAllMemo = { ts: 0, data: null };
 let _historyQuerySupported = true;
 let _inventoryFetchErrorShown = false;
 let inventorySearchTerm = '';
+let inventoryFilterCompany = '';
+let inventoryFilterStatus = '';
+let inventoryFilterUnit = '';
 let lastForecastResult = null;
 let activeWorkOrderModal = null;
+let bulkImportState = null;
+let ropAlertedKeys = new Set();
+let _restockMemo = { ts: 0, items: [], map: new Map() };
+const ROP_ALERT_KEY = 'gudang_rop_alerts_v1';
+const ROP_ALERT_COOLDOWN_MS = 30 * 60 * 1000;
+const TOAST_DEDUPE_WINDOW_MS = 12 * 1000;
+const UNIT_OPTIONS = [
+    { value: 'pcs', label: 'Pieces (pcs)' },
+    { value: 'kg', label: 'Kilogram (kg)' },
+    { value: 'roll', label: 'Roll' },
+    { value: 'meter', label: 'Meter' },
+    { value: 'box', label: 'Box' },
+    { value: 'set', label: 'Set' },
+    { value: 'unit', label: 'Unit' },
+    { value: 'pack', label: 'Pack' }
+];
 
-// Helper: ambil token dari localStorage atau sessionStorage
-function getAuthToken() {
-    return sessionStorage.getItem('gudang_token') || localStorage.getItem('gudang_token') || '';
+function normalizeUnitValue(value) {
+    return String(value || '').trim().toLowerCase();
 }
 
-// Helper: tangani response Unauthorized - hapus token dan minta login ulang
-function handleUnauthorized() {
-    sessionStorage.removeItem('gudang_token');
-    sessionStorage.removeItem('gudang_isLoggedIn');
-    localStorage.removeItem('gudang_token');
-    localStorage.removeItem('gudang_isLoggedIn');
-    showToast('Sesi habis, silakan login ulang.', 'error');
-    setTimeout(() => location.reload(), 1500);
+function renderUnitOptions(selectedValue = '', includeEmpty = false) {
+    const selected = normalizeUnitValue(selectedValue);
+    const options = UNIT_OPTIONS.slice();
+    if (selected && !options.some(opt => normalizeUnitValue(opt.value) === selected)) {
+        options.push({ value: selectedValue, label: selectedValue });
+    }
+    const rows = [];
+    if (includeEmpty) {
+        rows.push('<option value="">Pilih Satuan</option>');
+    }
+    options.forEach(opt => {
+        const isSelected = normalizeUnitValue(opt.value) === selected ? 'selected' : '';
+        rows.push(`<option value="${_escapeHtml(opt.value)}" ${isSelected}>${_escapeHtml(opt.label)}</option>`);
+    });
+    return rows.join('');
+}
+
+function ensureUnitOption(selectElem, value) {
+    if (!selectElem) return;
+    const normalized = normalizeUnitValue(value);
+    if (!normalized) return;
+    const exists = Array.from(selectElem.options || []).some(opt => normalizeUnitValue(opt.value) === normalized);
+    if (!exists) {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = value;
+        selectElem.appendChild(option);
+    }
+    selectElem.value = value;
 }
 
 function showToast(message, type = 'info', title = '') {
     const container = document.getElementById('toast-container');
     if (!container) return;
+
+    const toastKey = `${String(title || '').trim()}|${String(type || '').trim()}|${String(message || '').trim()}`;
+    const now = Date.now();
+    const lastShownAt = Number(recentToastMap.get(toastKey) || 0);
+    if (lastShownAt && (now - lastShownAt) < TOAST_DEDUPE_WINDOW_MS) {
+        return;
+    }
+    recentToastMap.set(toastKey, now);
+    Array.from(recentToastMap.entries()).forEach(([key, ts]) => {
+        if ((now - Number(ts || 0)) > TOAST_DEDUPE_WINDOW_MS) {
+            recentToastMap.delete(key);
+        }
+    });
 
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
@@ -67,6 +121,24 @@ function showToast(message, type = 'info', title = '') {
         toast.classList.remove('show');
         setTimeout(() => toast.remove(), 220);
     }, 2600);
+}
+
+function getPersistedRopAlerts() {
+    try {
+        const raw = localStorage.getItem(ROP_ALERT_KEY);
+        const parsed = raw ? JSON.parse(raw) : {};
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+        return {};
+    }
+}
+
+function savePersistedRopAlerts(mapObj) {
+    try {
+        localStorage.setItem(ROP_ALERT_KEY, JSON.stringify(mapObj || {}));
+    } catch {
+        // ignore storage failures
+    }
 }
 
 function setTheme(theme) {
@@ -160,7 +232,7 @@ async function addHistoryEntryFromUI() {
     };
 
     try {
-        const token = getAuthToken();
+        const token = sessionStorage.getItem('gudang_token') || '';
         const response = await fetch(`${API_BASE_URL}/api/history`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token },
@@ -203,9 +275,7 @@ const isLocalhost =
 // GANTI URL INI dengan URL Backend Anda (misal dari Render.com) jika sudah hosting backend
 const REMOTE_API_URL = 'https://web-production-28984.up.railway.app'; 
 const LOCAL_API_URL = 'http://localhost:8000';
-const API_BASE_URL = isGitHubPages
-    ? REMOTE_API_URL
-    : (isFileProtocol ? LOCAL_API_URL : (isLocalhost && window.location.port !== '8000' ? LOCAL_API_URL : ''));
+const API_BASE_URL = isGitHubPages ? REMOTE_API_URL : (isFileProtocol ? LOCAL_API_URL : '');
 
 function _joinApi(baseUrl, path) {
     if (!baseUrl) return path;
@@ -221,13 +291,13 @@ async function fetchApiWithFallback(path, options = {}) {
         if (!candidates.includes(s)) candidates.push(s);
     };
 
-    // Dari GitHub Pages, hanya gunakan REMOTE_API_URL (Railway)
-    if (isGitHubPages) {
-        add(REMOTE_API_URL);
-    } else {
-        add(API_BASE_URL);
-        add('');
+    add(API_BASE_URL);
+    add('');
+    if (isFileProtocol) {
         add(LOCAL_API_URL);
+    } else if (isLocalhost) {
+        add(LOCAL_API_URL);
+    } else {
         add(REMOTE_API_URL);
     }
 
@@ -265,15 +335,16 @@ async function getInventory() {
             }
         }
     } catch (e) {
-        console.warn("Backend fetch failed:", e);
-        if (!_inventoryFetchErrorShown) {
-            _inventoryFetchErrorShown = true;
-            showToast('Tidak bisa mengambil data dari server. Periksa koneksi ke backend Railway.', 'error');
-        }
+        console.warn("Backend fetch failed, using LocalStorage:", e);
     }
-    // Jika gagal konek ke Railway, kembalikan array kosong (jangan pakai localStorage sebagai data utama)
-    _inventoryMemo = { ts: Date.now(), data: [] };
-    return [];
+    const localData = localStorage.getItem('gudang_inventory');
+    const fallback = localData ? JSON.parse(localData) : initialInventory;
+    if ((!fallback || (Array.isArray(fallback) && fallback.length === 0)) && !_inventoryFetchErrorShown && !isGitHubPages) {
+        _inventoryFetchErrorShown = true;
+        showToast('Tidak bisa mengambil data inventori dari server. Pastikan backend berjalan dan database terhubung.', 'error');
+    }
+    _inventoryMemo = { ts: Date.now(), data: fallback };
+    return fallback;
 }
 
 async function getHistory(limit = 2000, offset = 0) {
@@ -286,6 +357,7 @@ async function getHistory(limit = 2000, offset = 0) {
         const all = await getHistoryAll();
         const sliced = all.slice(offset, offset + limit);
         historicalData = sliced;
+        localStorage.setItem('gudang_history', JSON.stringify(sliced));
         _historyMemo = { ts: Date.now(), key, data: sliced };
         return sliced;
     }
@@ -297,6 +369,7 @@ async function getHistory(limit = 2000, offset = 0) {
             const all = await getHistoryAll();
             const sliced = all.slice(offset, offset + limit);
             historicalData = sliced;
+            localStorage.setItem('gudang_history', JSON.stringify(sliced));
             _historyMemo = { ts: Date.now(), key, data: sliced };
             return sliced;
         }
@@ -304,6 +377,7 @@ async function getHistory(limit = 2000, offset = 0) {
         const remoteData = await response.json();
         if (Array.isArray(remoteData)) {
             historicalData = remoteData;
+            localStorage.setItem('gudang_history', JSON.stringify(remoteData));
             _historyMemo = { ts: Date.now(), key, data: remoteData };
             return remoteData;
         }
@@ -312,15 +386,16 @@ async function getHistory(limit = 2000, offset = 0) {
         const all = await getHistoryAll();
         const sliced = all.slice(offset, offset + limit);
         historicalData = sliced;
+        localStorage.setItem('gudang_history', JSON.stringify(sliced));
         _historyMemo = { ts: Date.now(), key, data: sliced };
         return sliced;
     } catch (e) {
         console.warn("History fetch failed:", e);
     }
-    // Jika gagal, kembalikan array kosong (data selalu dari Railway)
-    historicalData = [];
-    _historyMemo = { ts: Date.now(), key, data: [] };
-    return [];
+    const local = localStorage.getItem('gudang_history');
+    historicalData = local ? JSON.parse(local) : [];
+    _historyMemo = { ts: Date.now(), key, data: historicalData };
+    return historicalData;
 }
 
 async function getHistoryAll() {
@@ -363,6 +438,23 @@ async function getRestockList() {
     }
 }
 
+async function getRestockMapMemo() {
+    if (_restockMemo.map && (Date.now() - _restockMemo.ts) < 8000) {
+        return _restockMemo.map;
+    }
+    const items = await getRestockList();
+    const map = new Map();
+    if (Array.isArray(items)) {
+        items.forEach(it => {
+            const key = `${String(it.perusahaan || '').trim()}|${String(it.barang || '').trim()}`;
+            if (!key) return;
+            map.set(key, it);
+        });
+    }
+    _restockMemo = { ts: Date.now(), items: Array.isArray(items) ? items : [], map };
+    return map;
+}
+
 async function renderRestockList() {
     const tbody = document.getElementById('restock-table-body');
     const empty = document.getElementById('restock-empty');
@@ -393,19 +485,69 @@ async function renderRestockList() {
         `;
         tbody.innerHTML += row;
     });
+
+    notifyRopAlerts(items);
+}
+
+function notifyRopAlerts(items) {
+    if (!Array.isArray(items)) return;
+    const reorderItems = items.filter(it => Boolean(it.reorder_needed));
+    if (!reorderItems.length) return;
+    const activeKeys = new Set(
+        reorderItems
+            .map(it => `${String(it.perusahaan || '').trim()}|${String(it.barang || '').trim()}`)
+            .filter(Boolean)
+    );
+    Array.from(ropAlertedKeys).forEach(key => {
+        if (!activeKeys.has(key)) {
+            ropAlertedKeys.delete(key);
+        }
+    });
+    const persisted = getPersistedRopAlerts();
+    const now = Date.now();
+    const newAlerts = [];
+
+    reorderItems.forEach(it => {
+        const key = `${String(it.perusahaan || '').trim()}|${String(it.barang || '').trim()}`;
+        if (!key || ropAlertedKeys.has(key)) return;
+
+        const lastShown = Number(persisted[key] || 0);
+        if (lastShown && (now - lastShown) < ROP_ALERT_COOLDOWN_MS) {
+            ropAlertedKeys.add(key);
+            return;
+        }
+
+        ropAlertedKeys.add(key);
+        persisted[key] = now;
+        newAlerts.push(it);
+    });
+
+    savePersistedRopAlerts(persisted);
+
+    if (!newAlerts.length) return;
+    const count = newAlerts.length;
+    const first = newAlerts[0];
+    if (count === 1) {
+        showToast(`Stok mencapai ROP: ${first.perusahaan} - ${first.barang}.`, 'error', 'Notifikasi ROP');
+        return;
+    }
+    showToast(`${count} item mencapai ROP. Cek tabel restock untuk detailnya.`, 'error', 'Notifikasi ROP');
 }
 
 async function saveInventory(inventory, options = {}) {
     const silent = Boolean(options.silent);
 
-    // Simpan ke memori lokal sebagai cache sementara
     localStorage.setItem('gudang_inventory', JSON.stringify(inventory));
     lastInventoryData = JSON.stringify(inventory);
     _inventoryMemo = { ts: Date.now(), data: inventory };
 
-    // Selalu kirim ke database Railway (termasuk dari GitHub Pages)
+    if (isGitHubPages) {
+        if (!silent) showToast('Tersimpan di browser (Mode GitHub)', 'info');
+        return true;
+    }
+
     try {
-        const token = getAuthToken();
+        const token = sessionStorage.getItem('gudang_token') || '';
         const response = await fetch(`${API_BASE_URL}/api/inventory`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token },
@@ -413,13 +555,8 @@ async function saveInventory(inventory, options = {}) {
         });
 
         if (response.ok) {
-            if (!silent) showToast('Data berhasil disimpan ke database!', 'success');
+            if (!silent) showToast('Database MySQL berhasil diperbarui!', 'success');
             return true;
-        }
-
-        if (response.status === 401) {
-            handleUnauthorized();
-            return false;
         }
 
         const err = await response.json().catch(() => ({}));
@@ -444,7 +581,8 @@ async function updateKpiCards() {
     const companies = await getUniqueCompanies();
     const totalItems = inventory.length;
     const availableItems = inventory.filter(i => i.status === 'Ada' && Number(i.stok) > 0).length;
-    const restockItems = inventory.filter(i => Number(i.stok) <= 0 || i.status === 'Tidak Ada').length;
+    const restockList = await getRestockList();
+    const restockItems = Array.isArray(restockList) ? restockList.length : 0;
 
     const totalEl = document.getElementById('kpi-total-items');
     const availEl = document.getElementById('kpi-available-items');
@@ -459,17 +597,15 @@ async function updateKpiCards() {
 
 let transactionChart = null;
 let predictChart = null;
+let pvaChart = null;
 
 function initChart(data = []) {
     const ctx = document.getElementById('transactionChart');
     if (!ctx) return;
 
-    if (!Array.isArray(data) || data.length === 0) {
-        console.warn("Chart data empty");
-        return;
-    }
+    const rows = Array.isArray(data) ? data : [];
 
-    const grouped = data.reduce((acc, curr) => {
+    const grouped = rows.reduce((acc, curr) => {
         const tanggal = String(curr.tanggal || '').slice(0, 10);
         if (!tanggal) return acc;
 
@@ -490,8 +626,17 @@ function initChart(data = []) {
     }, {});
 
     const sortedMonths = Object.keys(grouped).sort();
-    const labels = sortedMonths.slice(-12);
-    const values = labels.map(l => grouped[l]);
+    let labels = sortedMonths.slice(-12);
+    if (labels.length === 0) {
+        const now = new Date();
+        const tmp = [];
+        for (let i = 11; i >= 0; i--) {
+            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            tmp.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+        }
+        labels = tmp;
+    }
+    const values = labels.map(l => Number(grouped[l] || 0));
 
     if (transactionChart) {
         transactionChart.destroy();
@@ -695,6 +840,39 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
         }
 
+        const invCompany = document.getElementById('inventory-filter-company');
+        if (invCompany) {
+            invCompany.addEventListener('change', () => {
+                inventoryFilterCompany = String(invCompany.value || '');
+                const invSection = document.getElementById('section-inventory');
+                if (invSection && invSection.style.display !== 'none') {
+                    fetchInventory();
+                }
+            });
+        }
+
+        const invStatus = document.getElementById('inventory-filter-status');
+        if (invStatus) {
+            invStatus.addEventListener('change', () => {
+                inventoryFilterStatus = String(invStatus.value || '');
+                const invSection = document.getElementById('section-inventory');
+                if (invSection && invSection.style.display !== 'none') {
+                    fetchInventory();
+                }
+            });
+        }
+
+        const invUnit = document.getElementById('inventory-filter-unit');
+        if (invUnit) {
+            invUnit.addEventListener('change', () => {
+                inventoryFilterUnit = String(invUnit.value || '').trim();
+                const invSection = document.getElementById('section-inventory');
+                if (invSection && invSection.style.display !== 'none') {
+                    fetchInventory();
+                }
+            });
+        }
+
         // Setup login event listeners
         const loginPass = document.getElementById('login-password');
         if (loginPass) {
@@ -724,13 +902,8 @@ function closeSidebar() {
 // Authentication Logic
 function checkLogin() {
     try {
-        const isLoggedIn = sessionStorage.getItem('gudang_isLoggedIn') || localStorage.getItem('gudang_isLoggedIn');
-        const token = sessionStorage.getItem('gudang_token') || localStorage.getItem('gudang_token');
-        // Sinkronisasi ke sessionStorage jika ada di localStorage
-        if (token && !sessionStorage.getItem('gudang_token')) {
-            sessionStorage.setItem('gudang_token', token);
-            sessionStorage.setItem('gudang_isLoggedIn', 'true');
-        }
+        const isLoggedIn = sessionStorage.getItem('gudang_isLoggedIn');
+        const token = sessionStorage.getItem('gudang_token');
         const loginPage = document.getElementById('login-page');
         const mainApp = document.getElementById('main-app');
 
@@ -775,8 +948,6 @@ function handleLogin() {
 
             const data = await response.json();
             if (data?.token) {
-                localStorage.setItem('gudang_token', data.token);
-                localStorage.setItem('gudang_isLoggedIn', 'true');
                 sessionStorage.setItem('gudang_token', data.token);
                 sessionStorage.setItem('gudang_isLoggedIn', 'true');
                 checkLogin();
@@ -796,8 +967,6 @@ function handleLogin() {
 function handleLogout() {
     sessionStorage.removeItem('gudang_isLoggedIn');
     sessionStorage.removeItem('gudang_token');
-    localStorage.removeItem('gudang_isLoggedIn');
-    localStorage.removeItem('gudang_token');
     location.reload();
 }
 
@@ -806,6 +975,20 @@ function toggleHistoryView() {
     const btn = document.getElementById('toggle-history-btn');
     if (btn) btn.textContent = showAllHistoryRows ? 'Tampilkan 10' : 'Lihat Semua';
     fetchInventory();
+}
+
+function setHistoryExpanded(expanded) {
+    showAllHistoryRows = Boolean(expanded);
+    const btn = document.getElementById('toggle-history-btn');
+    if (btn) btn.textContent = showAllHistoryRows ? 'Tampilkan 10' : 'Lihat Semua';
+}
+
+function scrollToHistoryTable() {
+    const historySection = document.getElementById('history-table-body');
+    if (!historySection) return;
+    const tableCard = historySection.closest('.card');
+    if (!tableCard || typeof tableCard.scrollIntoView !== 'function') return;
+    tableCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function _historyRowToHtml(h) {
@@ -817,6 +1000,7 @@ function _historyRowToHtml(h) {
     return `
                 <tr>
                     <td>${h.tanggal}</td>
+                    <td>${_escapeHtml(h.nomor_dokumen || '-')}</td>
                     <td>${h.perusahaan}</td>
                     <td>${h.nama_barang}</td>
                     <td>${h.satuan}</td>
@@ -875,6 +1059,19 @@ async function populateCompanyDropdowns() {
         });
         if (currentValue) siSelect.value = currentValue;
     }
+
+    const invCompanyFilter = document.getElementById('inventory-filter-company');
+    if (invCompanyFilter) {
+        const currentValue = invCompanyFilter.value;
+        invCompanyFilter.innerHTML = '<option value="">Semua</option>';
+        companies.forEach(company => {
+            const opt = document.createElement('option');
+            opt.value = company;
+            opt.textContent = company;
+            invCompanyFilter.appendChild(opt);
+        });
+        if (currentValue) invCompanyFilter.value = currentValue;
+    }
 }
 
 async function showSection(sectionId) {
@@ -888,7 +1085,11 @@ async function showSection(sectionId) {
 
     if (sectionId === 'inventory') await fetchInventory();
     if (sectionId === 'dashboard') await renderRestockList();
-    if (sectionId === 'predictions') await refreshPredictionLogs();
+    if (sectionId === 'predictions') {
+        await populatePrediksiVsAktualFilters();
+        await refreshPredictionLogs();
+        await renderPrediksiVsAktual(true);
+    }
     if (sectionId === 'planning') await renderWorkOrders();
     closeSidebar();
 }
@@ -934,7 +1135,7 @@ async function updateItems() {
     itemSelect.onchange = () => {
         const selected = itemSelect.options[itemSelect.selectedIndex];
         if (selected && selected.dataset.satuan && unitSelect) {
-            unitSelect.value = selected.dataset.satuan;
+            ensureUnitOption(unitSelect, selected.dataset.satuan);
         }
     };
 }
@@ -945,20 +1146,38 @@ async function fetchInventory() {
     if (!tbody) return;
     
     const data = await getInventory();
-    const filtered = inventorySearchTerm
-        ? data.filter(item => {
+    const restockMap = await getRestockMapMemo();
+    let filtered = Array.isArray(data) ? data.slice() : [];
+
+    if (inventorySearchTerm) {
+        filtered = filtered.filter(item => {
             const perusahaan = String(item.perusahaan || '').toLowerCase();
             const barang = String(item.barang || '').toLowerCase();
             const lokasi = String(item.lokasi || '').toLowerCase();
             const satuan = String(item.satuan || '').toLowerCase();
             return perusahaan.includes(inventorySearchTerm) || barang.includes(inventorySearchTerm) || lokasi.includes(inventorySearchTerm) || satuan.includes(inventorySearchTerm);
-        })
-        : data;
+        });
+    }
+
+    if (inventoryFilterCompany) {
+        filtered = filtered.filter(item => String(item.perusahaan || '') === String(inventoryFilterCompany));
+    }
+    if (inventoryFilterStatus) {
+        filtered = filtered.filter(item => String(item.status || '') === String(inventoryFilterStatus));
+    }
+    if (inventoryFilterUnit) {
+        const u = String(inventoryFilterUnit || '').toLowerCase();
+        filtered = filtered.filter(item => String(item.satuan || '').toLowerCase().includes(u));
+    }
     
     tbody.innerHTML = filtered.map(item => {
         const statusClass = item.status === 'Ada' ? 'ada' : 'tidak-ada';
+        const key = `${String(item.perusahaan || '').trim()}|${String(item.barang || '').trim()}`;
+        const ropInfo = restockMap.get(key);
+        const ropBadge = ropInfo ? `<span class="rop-badge rop-badge--danger" style="white-space:nowrap;">ROP</span>` : '';
+        const rowStyle = ropInfo ? ` style="background: rgba(220, 38, 38, 0.06);"` : '';
         return `
-            <tr>
+            <tr${rowStyle}>
                 <td>${item.perusahaan}</td>
                 <td>${item.barang}</td>
                 <td>
@@ -967,14 +1186,19 @@ async function fetchInventory() {
                     </div>
                 </td>
                 <td>
-                    <input type="text" value="${item.satuan || ''}" list="unit-options" class="stock-input" onfocus="this.dataset.prev=this.value" onchange="updateUnit(${item.id}, this)">
+                    <select class="stock-input" onfocus="this.dataset.prev=this.value" onchange="updateUnit(${item.id}, this)">
+                        ${renderUnitOptions(item.satuan || '', false)}
+                    </select>
                 </td>
                 <td>${item.lokasi}</td>
                 <td>
-                    <select class="status-toggle ${statusClass}" onfocus="this.dataset.prev=this.value" onchange="updateStatus(${item.id}, this)">
-                        <option value="Ada" ${item.status === 'Ada' ? 'selected' : ''}>Ada</option>
-                        <option value="Tidak Ada" ${item.status === 'Tidak Ada' ? 'selected' : ''}>Tidak Ada</option>
-                    </select>
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <select class="status-toggle ${statusClass}" onfocus="this.dataset.prev=this.value" onchange="updateStatus(${item.id}, this)">
+                            <option value="Ada" ${item.status === 'Ada' ? 'selected' : ''}>Ada</option>
+                            <option value="Tidak Ada" ${item.status === 'Tidak Ada' ? 'selected' : ''}>Tidak Ada</option>
+                        </select>
+                        ${ropBadge}
+                    </div>
                 </td>
                 <td>
                     <button class="btn-table" onclick="selectCompany('${item.perusahaan}', '${item.barang}')">Prediksi</button>
@@ -1095,7 +1319,7 @@ async function updateStockInItems() {
     itemSelect.onchange = () => {
         const selected = itemSelect.options[itemSelect.selectedIndex];
         if (selected && selected.dataset.satuan && unitSelect) {
-            unitSelect.value = selected.dataset.satuan;
+            ensureUnitOption(unitSelect, selected.dataset.satuan);
         }
     };
 }
@@ -1123,7 +1347,7 @@ async function addStockInEntryFromUI() {
     }
 
     try {
-        const token = getAuthToken();
+        const token = sessionStorage.getItem('gudang_token') || '';
         const response = await fetch(`${API_BASE_URL}/api/stock-in`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token },
@@ -1175,7 +1399,7 @@ async function submitNewInventory() {
         if (ok) showToast("Barang berhasil ditambahkan.", "success");
     } else {
         try {
-            const token = getAuthToken();
+            const token = sessionStorage.getItem('gudang_token') || '';
             const response = await fetch(`${API_BASE_URL}/api/inventory/add`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token },
@@ -1222,7 +1446,7 @@ async function deleteInventoryItem(id) {
     }
 
     try {
-        const token = getAuthToken();
+        const token = sessionStorage.getItem('gudang_token') || '';
         const response = await fetch(`${API_BASE_URL}/api/inventory/${encodeURIComponent(String(id))}`, {
             method: 'DELETE',
             headers: { 'X-Auth-Token': token }
@@ -1249,9 +1473,9 @@ async function exportToExcel() {
     const leadTimeInput = document.getElementById('lead-time');
     const serviceLevelSelect = document.getElementById('service-level');
     const tInput = document.getElementById('tanggal');
-
     const lead_time = parseInt(leadTimeInput?.value || '3', 10);
     const service_level = parseFloat(serviceLevelSelect?.value || '0.95');
+    const algorithm = 'xgboost';
 
     const now = new Date();
     const y = now.getFullYear();
@@ -1305,7 +1529,7 @@ async function exportToExcel() {
     }
 
     const predictionsRaw = await mapWithConcurrency(items, 5, async (it) => {
-        const response = await fetch(`${API_BASE_URL}/api/predict`, {
+        const response = await fetchApiWithFallback(`/api/predict`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1313,7 +1537,8 @@ async function exportToExcel() {
                 nama_barang: it.nama_barang,
                 target_date,
                 lead_time: Number.isFinite(lead_time) && lead_time > 0 ? lead_time : 3,
-                service_level: Number.isFinite(service_level) ? service_level : 0.95
+                service_level: Number.isFinite(service_level) ? service_level : 0.95,
+                algorithm
             })
         });
         if (!response.ok) return null;
@@ -1322,6 +1547,7 @@ async function exportToExcel() {
             'Perusahaan': data.perusahaan,
             'Nama Barang': data.nama_barang,
             'Target Bulan': (data.target_month || '').slice(0, 10),
+            'Algoritma': String(data.algorithm || algorithm),
             'Lead Time': data.lead_time,
             'Service Level': data.service_level,
             'Prediksi': Number(data.prediction || 0),
@@ -1332,7 +1558,7 @@ async function exportToExcel() {
             'Status ROP': data.reorder_needed ? 'Reorder' : 'Aman',
             'MAE': Number(data.metrics?.mae ?? 0),
             'RMSE': Number(data.metrics?.rmse ?? 0),
-            'R2': Number(data.metrics?.r2 ?? 0),
+            'MAPE': Number(data.metrics?.mape ?? 0),
             'History (bulan)': Number(data.history_points || 0),
             'Cold Start': data.cold_start ? 'Ya' : 'Tidak'
         };
@@ -1385,7 +1611,7 @@ async function refreshPredictionLogs() {
     if (!rows.length) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="9" style="text-align:center; color: var(--muted); padding: 1rem;">
+                <td colspan="10" style="text-align:center; color: var(--muted); padding: 1rem;">
                     Belum ada data prediksi.
                 </td>
             </tr>
@@ -1403,6 +1629,7 @@ async function refreshPredictionLogs() {
                 <td>${r.perusahaan || '-'}</td>
                 <td>${r.nama_barang || '-'}</td>
                 <td>${(r.target_month || '').slice(0, 10) || '-'}</td>
+                <td>${r.algorithm || '-'}</td>
                 <td>${Number(r.prediction || 0).toLocaleString('id-ID')}</td>
                 <td>${Number(r.current_stock || 0).toLocaleString('id-ID')}</td>
                 <td>${Number(r.needed_stock || 0).toLocaleString('id-ID')}</td>
@@ -1411,6 +1638,271 @@ async function refreshPredictionLogs() {
             </tr>
         `;
     }).join('');
+}
+
+async function populatePrediksiVsAktualFilters() {
+    const pSel = document.getElementById('pva-perusahaan');
+    const bSel = document.getElementById('pva-barang');
+    if (!pSel || !bSel) return;
+
+    const inventory = await getInventory();
+    const companies = [...new Set(inventory.map(i => String(i.perusahaan || '').trim()).filter(Boolean))].sort();
+
+    const prevCompany = pSel.value || '';
+    pSel.innerHTML = '<option value="" disabled selected>Pilih Perusahaan</option>';
+    companies.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c;
+        opt.textContent = c;
+        pSel.appendChild(opt);
+    });
+
+    const desiredCompany = String(lastForecastResult?.perusahaan || prevCompany || companies[0] || '');
+    if (desiredCompany) pSel.value = desiredCompany;
+
+    const fillItems = (company) => {
+        const items = inventory
+            .filter(i => String(i.perusahaan || '') === String(company || ''))
+            .map(i => String(i.barang || '').trim())
+            .filter(Boolean);
+        const uniqueItems = [...new Set(items)].sort();
+        const prevItem = bSel.value || '';
+        bSel.innerHTML = '<option value="" disabled selected>Pilih Barang</option>';
+        uniqueItems.forEach(nm => {
+            const opt = document.createElement('option');
+            opt.value = nm;
+            opt.textContent = nm;
+            bSel.appendChild(opt);
+        });
+        const desiredItem = String(lastForecastResult?.nama_barang || prevItem || uniqueItems[0] || '');
+        if (desiredItem) bSel.value = desiredItem;
+    };
+
+    fillItems(pSel.value);
+    pSel.onchange = () => {
+        fillItems(pSel.value);
+    };
+}
+
+async function renderPrediksiVsAktual(silent = false) {
+    const pSel = document.getElementById('pva-perusahaan');
+    const bSel = document.getElementById('pva-barang');
+    const canvas = document.getElementById('pvaChart');
+    if (!pSel || !bSel || !canvas) return;
+
+    const perusahaan = String(pSel.value || '').trim();
+    const nama_barang = String(bSel.value || '').trim();
+    if (!perusahaan || !nama_barang) {
+        if (!silent) showToast('Pilih perusahaan dan barang untuk menampilkan grafik.', 'error');
+        return;
+    }
+
+    try {
+        const path = `/api/predictions-vs-actual?perusahaan=${encodeURIComponent(perusahaan)}&nama_barang=${encodeURIComponent(nama_barang)}&months=12`;
+        const response = await fetchApiWithFallback(path);
+        if (!response.ok) {
+            const msg = await readApiErrorMessage(response);
+            if (!silent) showToast(msg || 'Gagal memuat grafik prediksi vs aktual.', 'error');
+            return;
+        }
+        const data = await response.json().catch(() => ({}));
+        const series = Array.isArray(data.series) ? data.series : [];
+
+        const labels = series.map(x => String(x.month || '').slice(0, 7));
+        const actual = series.map(x => (x.actual == null ? null : Number(x.actual || 0)));
+        const predicted = series.map(x => (x.predicted == null ? null : Number(x.predicted || 0)));
+
+        if (pvaChart) pvaChart.destroy();
+        pvaChart = new Chart(canvas, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [
+                    {
+                        label: 'Aktual (Keluar)',
+                        data: actual,
+                        borderColor: '#16a34a',
+                        backgroundColor: 'rgba(22, 163, 74, 0.08)',
+                        borderWidth: 3,
+                        tension: 0.35,
+                        fill: true,
+                        pointRadius: 4
+                    },
+                    {
+                        label: 'Prediksi',
+                        data: predicted,
+                        borderColor: '#4f46e5',
+                        borderWidth: 3,
+                        borderDash: [8, 6],
+                        tension: 0.35,
+                        fill: false,
+                        pointRadius: 4
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: true },
+                    tooltip: {
+                        backgroundColor: '#1e293b',
+                        padding: 12,
+                        titleFont: { size: 14, weight: 'bold' },
+                        bodyFont: { size: 13 }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: { color: 'rgba(0,0,0,0.05)', drawBorder: false },
+                        ticks: { color: '#64748b' }
+                    },
+                    x: {
+                        grid: { display: false },
+                        ticks: { color: '#64748b' }
+                    }
+                }
+            }
+        });
+    } catch (e) {
+        if (!silent) showToast('Terjadi kesalahan jaringan saat memuat grafik.', 'error');
+    }
+}
+
+async function compareAlgoritma() {
+    const pSel = document.getElementById('pva-perusahaan');
+    const bSel = document.getElementById('pva-barang');
+    const wrap = document.getElementById('algo-compare-wrap');
+    if (!pSel || !bSel || !wrap) return;
+
+    const perusahaan = String(pSel.value || '').trim();
+    const nama_barang = String(bSel.value || '').trim();
+    if (!perusahaan || !nama_barang) {
+        showToast('Pilih perusahaan dan barang untuk komparasi.', 'error');
+        return;
+    }
+
+    wrap.innerHTML = 'Memuat komparasi...';
+    try {
+        const response = await fetchApiWithFallback(`/api/compare-algorithms`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ perusahaan, nama_barang })
+        });
+        if (!response.ok) {
+            const msg = await readApiErrorMessage(response);
+            wrap.innerHTML = _escapeHtml(msg || 'Gagal memuat komparasi.');
+            return;
+        }
+        const data = await response.json().catch(() => ({}));
+        const results = Array.isArray(data.results) ? data.results : [];
+        if (!results.length) {
+            wrap.innerHTML = 'Tidak ada data komparasi.';
+            return;
+        }
+
+        const rowsHtml = results.map(r => {
+            const algo = String(r.algorithm || '-');
+            const ok = Boolean(r.available);
+            const mae = Number(r.metrics?.mae || 0);
+            const rmse = Number(r.metrics?.rmse || 0);
+            const mape = Number(r.metrics?.mape || 0);
+            const msg = String(r.message || '');
+            return `
+                <tr>
+                    <td>${_escapeHtml(algo)}</td>
+                    <td>${ok ? 'OK' : 'Tidak'}</td>
+                    <td>${mae.toFixed(2)}</td>
+                    <td>${rmse.toFixed(2)}</td>
+                    <td>${mape.toFixed(2)}%</td>
+                    <td>${_escapeHtml(msg || '-')}</td>
+                </tr>
+            `;
+        }).join('');
+
+        wrap.innerHTML = `
+            <div class="table-container">
+                <table class="modern-table">
+                    <thead>
+                        <tr>
+                            <th>Algoritma</th>
+                            <th>Tersedia</th>
+                            <th>MAE</th>
+                            <th>RMSE</th>
+                            <th>MAPE</th>
+                            <th>Catatan</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rowsHtml}</tbody>
+                </table>
+            </div>
+        `;
+    } catch (e) {
+        wrap.innerHTML = 'Terjadi kesalahan jaringan.';
+    }
+}
+
+function printPredictionsReport() {
+    const pSel = document.getElementById('pva-perusahaan');
+    const bSel = document.getElementById('pva-barang');
+    const perusahaan = String(pSel?.value || '').trim();
+    const nama_barang = String(bSel?.value || '').trim();
+    if (!perusahaan || !nama_barang) {
+        showToast('Pilih perusahaan dan barang sebelum ekspor PDF.', 'error');
+        return;
+    }
+
+    const canvas = document.getElementById('pvaChart');
+    const chartImg = canvas && typeof canvas.toDataURL === 'function' ? canvas.toDataURL('image/png') : '';
+
+    const rows = Array.from(document.querySelectorAll('#prediction-log-body tr')).slice(0, 50).map(tr => {
+        const tds = Array.from(tr.querySelectorAll('td')).map(td => td.textContent || '');
+        return tds;
+    });
+
+    const head = ['Waktu', 'Perusahaan', 'Barang', 'Target', 'Algoritma', 'Prediksi', 'Stok', 'Perlu', 'ROP', 'Status'];
+    const tableHead = head.map(h => `<th>${_escapeHtml(h)}</th>`).join('');
+    const tableBody = rows.map(cols => `<tr>${cols.map(c => `<td>${_escapeHtml(c)}</td>`).join('')}</tr>`).join('');
+
+    const html = `
+        <!doctype html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <title>Laporan Prediksi - ${_escapeHtml(perusahaan)} - ${_escapeHtml(nama_barang)}</title>
+            <style>
+                body { font-family: Arial, sans-serif; padding: 22px; color: #111; }
+                h1 { font-size: 16px; margin: 0 0 4px 0; }
+                .sub { font-size: 12px; color: #444; margin-bottom: 12px; }
+                img { width: 100%; max-height: 340px; object-fit: contain; border: 1px solid #ddd; border-radius: 10px; }
+                table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 11px; }
+                th, td { border: 1px solid #ddd; padding: 6px; text-align: left; vertical-align: top; }
+                th { background: #f3f4f6; font-weight: 700; }
+                @media print { body { padding: 0; } }
+            </style>
+        </head>
+        <body>
+            <h1>Laporan Prediksi vs Aktual</h1>
+            <div class="sub">${_escapeHtml(perusahaan)} — ${_escapeHtml(nama_barang)}</div>
+            ${chartImg ? `<img src="${chartImg}" alt="Grafik">` : ''}
+            <table>
+                <thead><tr>${tableHead}</tr></thead>
+                <tbody>${tableBody}</tbody>
+            </table>
+            <script>window.focus(); window.print();</script>
+        </body>
+        </html>
+    `;
+
+    const w = window.open('', '_blank');
+    if (!w) {
+        showToast('Popup diblokir browser. Izinkan popup untuk ekspor PDF.', 'error');
+        return;
+    }
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
 }
 
 async function getWorkOrders(limit = 200, offset = 0) {
@@ -1616,7 +2108,7 @@ async function saveWorkOrderModal() {
     const notes = (document.getElementById('wo-m-notes')?.value || '').trim();
 
     try {
-        const token = getAuthToken();
+        const token = sessionStorage.getItem('gudang_token') || '';
         const response = await fetchApiWithFallback(`/api/work-orders/${encodeURIComponent(String(id))}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token },
@@ -1705,6 +2197,432 @@ function printWorkOrderModal() {
     w.document.close();
 }
 
+function getBulkImportConfig(mode = 'barang_keluar') {
+    if (String(mode) === 'finish_good') {
+        return {
+            mode: 'finish_good',
+            title: 'Import Stok Finish Good (Excel)',
+            required: ['perusahaan', 'nama_barang', 'stok'],
+            labels: {
+                perusahaan: 'Kolom Perusahaan',
+                nama_barang: 'Kolom Barang',
+                satuan: 'Kolom Satuan',
+                stok: 'Kolom Stok',
+                lokasi: 'Kolom Lokasi (opsional)'
+            }
+        };
+    }
+    return {
+        mode: 'barang_keluar',
+        title: 'Import Data Barang Keluar (CSV/Excel)',
+        required: ['doc_number', 'tanggal', 'perusahaan', 'nama_barang', 'qty_out'],
+        labels: {
+            doc_number: 'Kolom Nomor Dokumen/Transaksi',
+            tanggal: 'Kolom Tanggal',
+            perusahaan: 'Kolom Perusahaan',
+            nama_barang: 'Kolom Barang',
+            satuan: 'Kolom Satuan (opsional)',
+            qty_out: 'Kolom Qty Keluar',
+            qty_in: 'Kolom Qty Masuk (opsional)'
+        }
+    };
+}
+
+function downloadExcelTemplate(mode = 'barang_keluar') {
+    if (typeof XLSX === 'undefined') {
+        showToast('Library XLSX belum tersedia.', 'error');
+        return;
+    }
+
+    const isFinishGood = String(mode) === 'finish_good';
+    const rows = isFinishGood
+        ? [
+            {
+                'Perusahaan': 'PT. Contoh Indonesia',
+                'Nama Barang': 'FINISH GOOD A',
+                'Satuan': 'pcs',
+                'Stok': 1500,
+                'Lokasi': 'FG-01'
+            }
+        ]
+        : [
+            {
+                'Nomor Dokumen': 'DO-2026-0001',
+                'Tanggal': '2026-06-01',
+                'Perusahaan': 'PT. Contoh Indonesia',
+                'Nama Barang': 'FINISH GOOD A',
+                'Satuan': 'pcs',
+                'Qty Keluar': 250,
+                'Qty Masuk': 0
+            }
+        ];
+
+    const infoRows = isFinishGood
+        ? [
+            { 'Petunjuk': 'Isi kolom Perusahaan, Nama Barang, Satuan, Stok, dan Lokasi.' },
+            { 'Petunjuk': 'Kolom Lokasi boleh dikosongkan, default akan menjadi A-01.' },
+            { 'Petunjuk': 'Nilai stok harus berupa angka 0 atau lebih.' }
+        ]
+        : [
+            { 'Petunjuk': 'Isi kolom Nomor Dokumen/Transaksi agar sistem dapat mendeteksi data yang sudah pernah diimport.' },
+            { 'Petunjuk': 'Isi kolom Tanggal, Perusahaan, Nama Barang, dan Qty Keluar.' },
+            { 'Petunjuk': 'Format tanggal yang disarankan: YYYY-MM-DD.' },
+            { 'Petunjuk': 'Qty Masuk opsional, isi 0 jika tidak ada barang masuk.' }
+        ];
+
+    const wb = XLSX.utils.book_new();
+    const wsData = XLSX.utils.json_to_sheet(rows);
+    const wsInfo = XLSX.utils.json_to_sheet(infoRows);
+    XLSX.utils.book_append_sheet(wb, wsData, 'Template');
+    XLSX.utils.book_append_sheet(wb, wsInfo, 'Petunjuk');
+
+    const filename = isFinishGood ? 'template_stok_finish_good.xlsx' : 'template_barang_keluar.xlsx';
+    XLSX.writeFile(wb, filename);
+    showToast(`Template ${isFinishGood ? 'stok finish good' : 'barang keluar'} berhasil diunduh.`, 'success');
+}
+
+function openBulkImport(mode = 'barang_keluar') {
+    const input = document.getElementById('bulk-import-file');
+    const title = document.getElementById('bulk-import-title');
+    const wrap = document.getElementById('bulk-apply-wrap');
+    const checkbox = document.getElementById('bulk-apply-inventory');
+    const config = getBulkImportConfig(mode);
+    bulkImportState = { mode: config.mode, raw: [], headers: [], mapping: {} };
+    if (title) title.textContent = config.title;
+    if (wrap) wrap.style.display = config.mode === 'barang_keluar' ? 'flex' : 'none';
+    if (checkbox) checkbox.checked = false;
+    if (!input) return;
+    input.value = '';
+    input.click();
+}
+
+function closeBulkImportModal() {
+    const modal = document.getElementById('bulk-import-modal');
+    if (modal) modal.style.display = 'none';
+    bulkImportState = null;
+}
+
+function setBulkImportSubmitting(isSubmitting) {
+    const submitBtn = document.querySelector('#bulk-import-modal button[onclick="submitBulkImport()"]');
+    if (!submitBtn) return;
+    submitBtn.disabled = Boolean(isSubmitting);
+    submitBtn.style.opacity = isSubmitting ? '0.7' : '';
+    submitBtn.style.cursor = isSubmitting ? 'not-allowed' : '';
+    submitBtn.textContent = isSubmitting ? 'Mengimpor...' : 'Import';
+}
+
+function _normHeader(s) {
+    return String(s || '')
+        .toLowerCase()
+        .replace(/[\s\-_]+/g, '')
+        .replace(/[^a-z0-9]/g, '');
+}
+
+function _autoMapHeaders(headers, mode = 'barang_keluar') {
+    const map = {};
+    const normToHeader = new Map();
+    headers.forEach(h => {
+        normToHeader.set(_normHeader(h), h);
+    });
+
+    const find = (...candidates) => {
+        for (const c of candidates) {
+            const h = normToHeader.get(_normHeader(c));
+            if (h) return h;
+        }
+        for (const h of headers) {
+            const nh = _normHeader(h);
+            for (const c of candidates) {
+                if (nh.includes(_normHeader(c))) return h;
+            }
+        }
+        return '';
+    };
+
+    map.perusahaan = find('perusahaan', 'company', 'companyname', 'customer');
+    map.nama_barang = find('nama_barang', 'barang', 'item', 'itemname', 'product');
+    map.satuan = find('satuan', 'unit', 'uom');
+    if (String(mode) === 'finish_good') {
+        map.stok = find('stok', 'stock', 'qty', 'jumlah_stok', 'finishgood', 'stokakhir');
+        map.lokasi = find('lokasi', 'location', 'rak', 'bin');
+        return map;
+    }
+    map.doc_number = find('nomor_dokumen', 'nomortransaksi', 'nomor_dokumen_transaksi', 'document_number', 'transaction_number', 'nodokumen', 'notransaksi', 'docnumber', 'transactionno', 'documentno', 'no dokumen', 'no transaksi');
+    map.tanggal = find('tanggal', 'date', 'tgl', 'transactiondate');
+    map.qty_out = find('qty_out', 'jumlah_keluar', 'keluar', 'qty', 'jumlah', 'po', 'orderqty');
+    map.qty_in = find('qty_in', 'jumlah_masuk', 'masuk', 'in');
+    return map;
+}
+
+async function handleBulkImportFile(input) {
+    const file = input?.files?.[0];
+    if (!file) return;
+    if (typeof XLSX === 'undefined') {
+        showToast('Library XLSX belum tersedia.', 'error');
+        return;
+    }
+
+    const modal = document.getElementById('bulk-import-modal');
+    const body = document.getElementById('bulk-import-body');
+    if (!modal || !body) return;
+    body.innerHTML = 'Memuat file...';
+    modal.style.display = 'block';
+
+    try {
+        const ext = String(file.name || '').toLowerCase();
+        const isCsv = ext.endsWith('.csv');
+
+        const data = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => resolve(e.target.result);
+            reader.onerror = reject;
+            if (isCsv) reader.readAsText(file);
+            else reader.readAsArrayBuffer(file);
+        });
+
+        let wb;
+        if (isCsv) {
+            wb = XLSX.read(String(data || ''), { type: 'string' });
+        } else {
+            wb = XLSX.read(data, { type: 'array' });
+        }
+
+        const sheetName = wb.SheetNames?.[0];
+        const ws = wb.Sheets?.[sheetName];
+        if (!ws) {
+            body.innerHTML = 'Sheet tidak ditemukan.';
+            return;
+        }
+
+        const json = XLSX.utils.sheet_to_json(ws, { defval: '' });
+        if (!Array.isArray(json) || json.length === 0) {
+            body.innerHTML = 'Data kosong.';
+            return;
+        }
+
+        const headers = Object.keys(json[0] || {});
+        const mode = String(bulkImportState?.mode || 'barang_keluar');
+        const config = getBulkImportConfig(mode);
+        const mapping = _autoMapHeaders(headers, mode);
+        bulkImportState = { raw: json, headers, mapping, mode };
+
+        const title = document.getElementById('bulk-import-title');
+        const wrap = document.getElementById('bulk-apply-wrap');
+        if (title) title.textContent = config.title;
+        if (wrap) wrap.style.display = mode === 'barang_keluar' ? 'flex' : 'none';
+
+        const selectHtml = (id, label, selected) => {
+            const opts = [''].concat(headers).map(h => {
+                const sel = String(h) === String(selected) ? 'selected' : '';
+                const text = h ? _escapeHtml(h) : '-';
+                const val = _escapeHtml(h);
+                return `<option value="${val}" ${sel}>${text}</option>`;
+            }).join('');
+            return `
+                <div class="form-group">
+                    <label>${_escapeHtml(label)}</label>
+                    <select id="${_escapeHtml(id)}" class="stock-input">${opts}</select>
+                </div>
+            `;
+        };
+
+        const previewRows = json.slice(0, 10);
+        const previewCols = headers.slice(0, 8);
+        const previewHead = previewCols.map(h => `<th>${_escapeHtml(h)}</th>`).join('');
+        const previewBody = previewRows.map(r => {
+            const tds = previewCols.map(h => `<td>${_escapeHtml(r?.[h] ?? '')}</td>`).join('');
+            return `<tr>${tds}</tr>`;
+        }).join('');
+
+        const mappingRows = mode === 'finish_good'
+            ? `
+                <div class="form-row">
+                    ${selectHtml('map-perusahaan', config.labels.perusahaan, mapping.perusahaan)}
+                    ${selectHtml('map-barang', config.labels.nama_barang, mapping.nama_barang)}
+                    ${selectHtml('map-satuan', config.labels.satuan, mapping.satuan)}
+                </div>
+                <div class="form-row">
+                    ${selectHtml('map-stok', config.labels.stok, mapping.stok)}
+                    ${selectHtml('map-lokasi', config.labels.lokasi, mapping.lokasi)}
+                </div>
+            `
+            : `
+                <div class="form-row">
+                    ${selectHtml('map-doc-number', config.labels.doc_number, mapping.doc_number)}
+                    ${selectHtml('map-tanggal', config.labels.tanggal, mapping.tanggal)}
+                    ${selectHtml('map-perusahaan', config.labels.perusahaan, mapping.perusahaan)}
+                </div>
+                <div class="form-row">
+                    ${selectHtml('map-barang', config.labels.nama_barang, mapping.nama_barang)}
+                    ${selectHtml('map-satuan', config.labels.satuan, mapping.satuan)}
+                    ${selectHtml('map-qtyout', config.labels.qty_out, mapping.qty_out)}
+                    ${selectHtml('map-qtyin', config.labels.qty_in, mapping.qty_in)}
+                </div>
+            `;
+
+        body.innerHTML = `
+            <div class="form-container">
+                ${mappingRows}
+                <div class="divider"></div>
+                <div style="font-weight:900; margin-bottom: 0.5rem;">Preview (10 baris pertama)</div>
+                <div class="table-container">
+                    <table class="modern-table">
+                        <thead><tr>${previewHead}</tr></thead>
+                        <tbody>${previewBody}</tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+    } catch (e) {
+        console.error('Bulk import parse error:', e);
+        body.innerHTML = 'Gagal membaca file.';
+    }
+}
+
+async function submitBulkImport() {
+    const state = bulkImportState;
+    if (!state || state.submitting) return;
+    const body = document.getElementById('bulk-import-body');
+    const applyCheckbox = document.getElementById('bulk-apply-inventory');
+    const apply_to_inventory = Boolean(applyCheckbox?.checked);
+    const mode = String(state.mode || 'barang_keluar');
+    state.submitting = true;
+    setBulkImportSubmitting(true);
+
+    const getMapVal = (id) => (document.getElementById(id)?.value || '').trim();
+    const colPerusahaan = getMapVal('map-perusahaan');
+    const colBarang = getMapVal('map-barang');
+    const colSatuan = getMapVal('map-satuan');
+    let endpoint = '/api/history/bulk';
+    let payload = {};
+
+    if (mode === 'finish_good') {
+        const colStok = getMapVal('map-stok');
+        const colLokasi = getMapVal('map-lokasi');
+        if (!colPerusahaan || !colBarang || !colStok) {
+            showToast('Mapping wajib diisi: Perusahaan, Barang, dan Stok.', 'error');
+            state.submitting = false;
+            setBulkImportSubmitting(false);
+            return;
+        }
+        const rows = [];
+        for (const r of state.raw) {
+            rows.push({
+                perusahaan: r[colPerusahaan],
+                nama_barang: r[colBarang],
+                satuan: colSatuan ? r[colSatuan] : '',
+                stok: colStok ? r[colStok] : 0,
+                lokasi: colLokasi ? r[colLokasi] : ''
+            });
+        }
+        endpoint = '/api/inventory/bulk';
+        payload = { rows };
+    } else {
+        const colDocNumber = getMapVal('map-doc-number');
+        const colTanggal = getMapVal('map-tanggal');
+        const colQtyOut = getMapVal('map-qtyout');
+        const colQtyIn = getMapVal('map-qtyin');
+        if (!colDocNumber || !colTanggal || !colPerusahaan || !colBarang || !colQtyOut) {
+            showToast('Mapping wajib diisi: Nomor Dokumen, Tanggal, Perusahaan, Barang, dan Qty Keluar.', 'error');
+            state.submitting = false;
+            setBulkImportSubmitting(false);
+            return;
+        }
+        const rows = [];
+        for (const r of state.raw) {
+            rows.push({
+                doc_number: r[colDocNumber],
+                tanggal: r[colTanggal],
+                perusahaan: r[colPerusahaan],
+                nama_barang: r[colBarang],
+                satuan: colSatuan ? r[colSatuan] : '',
+                qty_out: colQtyOut ? r[colQtyOut] : 0,
+                qty_in: colQtyIn ? r[colQtyIn] : 0
+            });
+        }
+        payload = { rows, apply_to_inventory };
+    }
+
+    let response;
+    try {
+        const token = sessionStorage.getItem('gudang_token') || '';
+        response = await fetchApiWithFallback(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token },
+            body: JSON.stringify(payload)
+        });
+    } catch (e) {
+        console.error('Bulk import request error:', e);
+        showToast('Terjadi kesalahan jaringan saat import.', 'error');
+        if (body) body.innerHTML = _escapeHtml('Terjadi kesalahan jaringan saat import.');
+        state.submitting = false;
+        setBulkImportSubmitting(false);
+        return;
+    }
+
+    if (!response.ok) {
+        const msg = await readApiErrorMessage(response);
+        showToast(msg || 'Gagal import data.', 'error');
+        state.submitting = false;
+        setBulkImportSubmitting(false);
+        return;
+    }
+
+    const data = await response.json().catch(() => ({}));
+    const imported = Number(data.imported || 0);
+    const skippedExisting = Number(data.skipped_existing || 0);
+    const duplicateInFile = Number(data.duplicate_in_file || 0);
+    const detail = [];
+    detail.push(`${imported.toLocaleString('id-ID')} data baru ditambahkan`);
+    if (skippedExisting > 0) {
+        detail.push(`${skippedExisting.toLocaleString('id-ID')} data lama dilewati`);
+    }
+    if (duplicateInFile > 0) {
+        detail.push(`${duplicateInFile.toLocaleString('id-ID')} duplikat di file dilewati`);
+    }
+    const importToastType = imported > 0 ? 'success' : 'info';
+    const importToastMessage = imported === 0 && skippedExisting > 0
+        ? `Semua data sudah ada di riwayat: ${detail.join(', ')}.`
+        : `Import selesai: ${detail.join(', ')}.`;
+    showToast(importToastMessage, importToastType);
+
+    closeBulkImportModal();
+    _inventoryMemo = { ts: 0, data: null };
+    _historyMemo = { ts: 0, key: '', data: null };
+    _historyAllMemo = { ts: 0, data: null };
+
+    try {
+        if (mode === 'barang_keluar') {
+            setHistoryExpanded(true);
+        }
+        await populateCompanyDropdowns();
+        await updateKpiCards();
+        await renderRestockList();
+        const historyRows = showAllHistoryRows ? await getHistoryAll() : await getHistory(10, 0);
+        historicalData = Array.isArray(historyRows) ? historyRows : [];
+        const hbody = document.getElementById('history-table-body');
+        if (hbody) {
+            hbody.innerHTML = historicalData.map(_historyRowToHtml).join('');
+        }
+        await fetchInventory();
+        initChart(await getHistory(1000, 0));
+    } catch (e) {
+        console.error('Bulk import refresh error:', e);
+    } finally {
+        state.submitting = false;
+        setBulkImportSubmitting(false);
+    }
+
+    if (mode === 'barang_keluar') {
+        try {
+            await showSection('inventory');
+            scrollToHistoryTable();
+        } catch (e) {
+            console.error('Open inventory after import error:', e);
+        }
+    }
+}
+
 function fillWorkOrderFromLastForecast() {
     if (!lastForecastResult) {
         showToast('Belum ada forecast terakhir. Jalankan prediksi di menu Forecast Kebutuhan dulu.', 'error');
@@ -1721,7 +2639,7 @@ function fillWorkOrderFromLastForecast() {
     if (b) b.value = lastForecastResult.nama_barang || '';
     if (tm) tm.value = (lastForecastResult.target_month || '').slice(0, 10);
     if (qty) qty.value = String(Math.max(1, Number(lastForecastResult.needed_stock || 0) || 1));
-    if (unit) unit.value = lastForecastResult.unit || '';
+    if (unit) ensureUnitOption(unit, lastForecastResult.unit || 'pcs');
 
     showToast('Form work order terisi dari forecast terakhir.', 'success');
 }
@@ -1740,7 +2658,7 @@ async function createWorkOrder() {
     if (!Number.isFinite(planned_qty) || planned_qty <= 0) return showToast('Qty produksi harus lebih dari 0.', 'error');
 
     try {
-        const token = getAuthToken();
+        const token = sessionStorage.getItem('gudang_token') || '';
         const response = await fetchApiWithFallback(`/api/work-orders`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token },
@@ -1803,7 +2721,7 @@ async function updateWorkOrderStatus(id, currentStatus = 'Draft') {
     if (!status) return showToast('Status tidak boleh kosong.', 'error');
 
     try {
-        const token = getAuthToken();
+        const token = sessionStorage.getItem('gudang_token') || '';
         const response = await fetchApiWithFallback(`/api/work-orders/${encodeURIComponent(String(woId))}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token },
@@ -1944,6 +2862,7 @@ async function predictStock() {
     const t = tInput.value;
     const lead_time = parseInt(leadTimeInput?.value || '3', 10);
     const service_level = parseFloat(serviceLevelSelect?.value || '0.95');
+    const algorithm = 'xgboost';
 
     const res = document.getElementById('result');
     const unitLabel = document.getElementById('result-unit');
@@ -1962,7 +2881,7 @@ async function predictStock() {
     const ropVal = document.getElementById('rop-val');
     const metricMae = document.getElementById('metric-mae');
     const metricRmse = document.getElementById('metric-rmse');
-    const metricR2 = document.getElementById('metric-r2');
+    const metricMape = document.getElementById('metric-mape');
     const metricAcc = document.getElementById('metric-acc');
     const ropStatusVal = document.getElementById('rop-status-val');
     if (curStockVal) curStockVal.innerText = "...";
@@ -1971,14 +2890,14 @@ async function predictStock() {
     if (ropVal) ropVal.innerText = "...";
     if (metricMae) metricMae.innerText = "...";
     if (metricRmse) metricRmse.innerText = "...";
-    if (metricR2) metricR2.innerText = "...";
+    if (metricMape) metricMape.innerText = "...";
     if (metricAcc) metricAcc.innerText = "...";
     if (ropStatusVal) ropStatusVal.innerText = "...";
     
     if (res) res.classList.add('loading-pulse');
 
     try {
-        const response = await fetch(`${API_BASE_URL}/api/predict`, {
+        const response = await fetchApiWithFallback(`/api/predict`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1986,13 +2905,14 @@ async function predictStock() {
                 nama_barang: b,
                 target_date: t,
                 lead_time: lead_time,
-                service_level: Number.isFinite(service_level) ? service_level : 0.95
+                service_level: Number.isFinite(service_level) ? service_level : 0.95,
+                algorithm
             })
         });
 
         if (!response.ok) {
-            const err = await response.json().catch(() => ({}));
-            showToast(err.message || 'Gagal menghitung prediksi.', 'error');
+            const msg = await readApiErrorMessage(response);
+            showToast(msg || 'Gagal menghitung prediksi.', 'error');
             if (res) res.classList.remove('loading-pulse');
             return;
         }
@@ -2013,7 +2933,8 @@ async function predictStock() {
             needed_stock: Number(data.needed_stock || 0),
             unit: String(data.unit || s || ''),
             lead_time: Number(data.lead_time || lead_time),
-            service_level: Number(data.service_level || service_level)
+            service_level: Number(data.service_level || service_level),
+            algorithm: String(data.algorithm || algorithm)
         };
 
         const isHistoryEmpty = Boolean(data.cold_start);
@@ -2028,7 +2949,10 @@ async function predictStock() {
 
             if (metricMae) metricMae.innerText = (data.metrics?.mae ?? 0).toFixed(2);
             if (metricRmse) metricRmse.innerText = (data.metrics?.rmse ?? 0).toFixed(2);
-            if (metricR2) metricR2.innerText = (data.metrics?.r2 ?? 0).toFixed(2);
+            if (metricMape) {
+                const mape = Number(data.metrics?.mape ?? 0);
+                metricMape.innerText = `${mape.toFixed(2)}%`;
+            }
             if (metricAcc) {
                 const acc = Number(data.metrics?.accuracy ?? data.accuracy ?? 0);
                 metricAcc.innerText = `${acc.toFixed(1)}%`;
@@ -2064,7 +2988,7 @@ async function predictStock() {
 
             renderPredictChart(data.history_series || [], data.target_month || '', prediction);
 
-            if (unitLabel) unitLabel.innerText = s.toUpperCase();
+            if (unitLabel) unitLabel.innerText = String(data.unit || s || 'unit').toUpperCase();
             if (locLabel) locLabel.innerText = lokasi;
             if (res) res.classList.remove('loading-pulse');
         }, 500);

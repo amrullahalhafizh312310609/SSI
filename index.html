@@ -6,7 +6,7 @@
     <title>PT. SEIGO SELARAS INDONESIA</title>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="static/style.css?v=2.7">
+    <link rel="stylesheet" href="static/style.css?v=3.0">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
@@ -124,8 +124,10 @@
                 <!-- DASHBOARD SECTION -->
                 <section id="section-dashboard" class="app-section">
                     <div class="welcome-section">
-                        <h1>Gudang <span style="color: var(--primary);">PT. SEIGO SELARAS INDONESIA</span></h1>
-                        <p>Sistem Manajemen Stok & Prediksi Kebutuhan Barang</p>
+                        <div class="welcome-text">
+                            <h1><span style="color: var(--primary);">PT. SEIGO SELARAS INDONESIA</span></h1>
+                            <p>Sistem Manajemen Stok & Prediksi Kebutuhan Barang</p>
+                        </div>
                     </div>
 
                     <div class="kpi-grid">
@@ -271,8 +273,7 @@
                                 </div>
 
                                 <button class="btn-primary" onclick="predictStock()">
-                                    <i class="fas fa-wand-magic-sparkles"></i>
-                                    <span>Hitung Kebutuhan</span>
+                                    <span>Hitung Prediksi</span>
                                 </button>
 
                                 <div class="divider"></div>
@@ -281,10 +282,17 @@
                                     <button class="btn-action btn-history" type="button" onclick="toggleHistoryForm()">
                                         <i class="fas fa-plus-circle"></i> Tambah Riwayat
                                     </button>
+                                    <button class="btn-action btn-excel" type="button" onclick="downloadExcelTemplate('barang_keluar')">
+                                        <i class="fas fa-file-arrow-down"></i> Template Barang Keluar
+                                    </button>
+                                    <button class="btn-action btn-excel" type="button" onclick="openBulkImport('barang_keluar')">
+                                        <i class="fas fa-file-import"></i> Import Excel
+                                    </button>
                                     <button class="btn-action btn-excel" type="button" onclick="exportToExcel()">
                                         <i class="fas fa-file-export"></i> Ekspor Excel
                                     </button>
                                 </div>
+                                <input type="file" id="bulk-import-file" accept=".csv,.xlsx,.xls" style="display:none" onchange="handleBulkImportFile(this)">
 
                                 <div id="history-form" class="history-form" style="display: none;">
                                     <div class="form-row">
@@ -360,8 +368,8 @@
                                         <div class="stock-info-value" id="metric-rmse">-</div>
                                     </div>
                                     <div class="stock-info-item">
-                                        <div class="stock-info-label">R²</div>
-                                        <div class="stock-info-value" id="metric-r2">-</div>
+                                        <div class="stock-info-label">MAPE</div>
+                                        <div class="stock-info-value" id="metric-mape">-</div>
                                     </div>
                                     <div class="stock-info-item">
                                         <div class="stock-info-label">Akurasi</div>
@@ -372,6 +380,7 @@
                                         <div class="stock-info-value rop-badge" id="rop-status-val">-</div>
                                     </div>
                                 </div>
+
                             </div>
                             <div class="result-footer">
                                 <div class="layout-info">
@@ -421,7 +430,16 @@
                                 </div>
                                 <div class="form-group">
                                     <label>Satuan</label>
-                                    <input type="text" id="wo-unit" list="unit-options" placeholder="pcs / kg / roll">
+                                    <select id="wo-unit">
+                                        <option value="pcs" selected>Pieces (pcs)</option>
+                                        <option value="kg">Kilogram (kg)</option>
+                                        <option value="roll">Roll</option>
+                                        <option value="meter">Meter</option>
+                                        <option value="box">Box</option>
+                                        <option value="set">Set</option>
+                                        <option value="unit">Unit</option>
+                                        <option value="pack">Pack</option>
+                                    </select>
                                 </div>
                             </div>
                             <div class="form-row">
@@ -496,6 +514,12 @@
                                      <button class="btn-text btn-small" onclick="toggleStockInForm()">
                                          <i class="fas fa-arrow-down"></i> Barang Masuk
                                      </button>
+                                     <button class="btn-text btn-small" type="button" onclick="downloadExcelTemplate('finish_good')">
+                                         <i class="fas fa-file-arrow-down"></i> Template Stok FG
+                                     </button>
+                                     <button class="btn-text btn-small" type="button" onclick="openBulkImport('finish_good')">
+                                         <i class="fas fa-file-import"></i> Import Excel
+                                     </button>
                                  </div>
                             </div>
                     </div>
@@ -520,7 +544,16 @@
                             <div class="form-row">
                                 <div class="form-group">
                                     <label>Satuan</label>
-                                    <input type="text" id="new-satuan" list="unit-options" placeholder="pcs / kg / roll">
+                                    <select id="new-satuan">
+                                        <option value="pcs" selected>Pieces (pcs)</option>
+                                        <option value="kg">Kilogram (kg)</option>
+                                        <option value="roll">Roll</option>
+                                        <option value="meter">Meter</option>
+                                        <option value="box">Box</option>
+                                        <option value="set">Set</option>
+                                        <option value="unit">Unit</option>
+                                        <option value="pack">Pack</option>
+                                    </select>
                                 </div>
                                 <div class="form-group">
                                     <label>Jumlah Stok</label>
@@ -591,6 +624,36 @@
                                     <input type="text" id="inventory-search" placeholder="Cari perusahaan / barang / lokasi">
                                 </div>
                             </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Filter Perusahaan</label>
+                                    <select id="inventory-filter-company">
+                                        <option value="">Semua</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Filter Status</label>
+                                    <select id="inventory-filter-status">
+                                        <option value="">Semua</option>
+                                        <option value="Ada">Ada</option>
+                                        <option value="Tidak Ada">Tidak Ada</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Filter Satuan</label>
+                                    <select id="inventory-filter-unit">
+                                        <option value="">Semua</option>
+                                        <option value="pcs">Pieces (pcs)</option>
+                                        <option value="kg">Kilogram (kg)</option>
+                                        <option value="roll">Roll</option>
+                                        <option value="meter">Meter</option>
+                                        <option value="box">Box</option>
+                                        <option value="set">Set</option>
+                                        <option value="unit">Unit</option>
+                                        <option value="pack">Pack</option>
+                                    </select>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -633,6 +696,7 @@
                                 <thead>
                                     <tr>
                                         <th>Tanggal</th>
+                                        <th>No. Dokumen</th>
                                         <th>Perusahaan</th>
                                         <th>Barang</th>
                                         <th>Satuan</th>
@@ -656,9 +720,31 @@
                                 <p>Riwayat prediksi yang pernah dilakukan (untuk evaluasi prediksi vs aktual).</p>
                             </div>
                             <div class="header-buttons">
+                                <div class="custom-select-wrapper" style="min-width: 220px;">
+                                    <i class="fas fa-city select-icon"></i>
+                                    <select id="pva-perusahaan"></select>
+                                </div>
+                                <div class="custom-select-wrapper" style="min-width: 220px;">
+                                    <i class="fas fa-boxes-stacked select-icon"></i>
+                                    <select id="pva-barang"></select>
+                                </div>
+                                <button class="btn-primary btn-small" type="button" onclick="renderPrediksiVsAktual()">
+                                    <i class="fas fa-chart-line"></i> Grafik
+                                </button>
+                                <button class="btn-primary btn-small" type="button" onclick="printPredictionsReport()">
+                                    <i class="fas fa-file-pdf"></i> Ekspor PDF
+                                </button>
                                 <button class="btn-primary btn-small" type="button" onclick="refreshPredictionLogs()">
                                     <i class="fas fa-rotate"></i> Refresh
                                 </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card" style="margin-bottom: 1.5rem;">
+                        <div class="table-container" style="padding: 1rem;">
+                            <div class="chart-box" style="height: 300px;">
+                                <canvas id="pvaChart"></canvas>
                             </div>
                         </div>
                     </div>
@@ -672,6 +758,7 @@
                                         <th>Perusahaan</th>
                                         <th>Barang</th>
                                         <th>Target</th>
+                                        <th>Algoritma</th>
                                         <th>Prediksi</th>
                                         <th>Stok</th>
                                         <th>Perlu</th>
@@ -690,15 +777,6 @@
         </main>
     </div>
 
-    <datalist id="unit-options">
-        <option value="pcs"></option>
-        <option value="kg"></option>
-        <option value="roll"></option>
-        <option value="meter"></option>
-        <option value="box"></option>
-        <option value="set"></option>
-    </datalist>
-
     <div id="workorder-modal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
@@ -714,9 +792,27 @@
         </div>
     </div>
 
+    <div id="bulk-import-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="bulk-import-title">Import Data Excel</h3>
+                <span class="close" onclick="closeBulkImportModal()">&times;</span>
+            </div>
+            <div id="bulk-import-body" style="margin-top: 1rem;"></div>
+            <div class="form-actions">
+                <label id="bulk-apply-wrap" style="display:flex; align-items:center; gap:10px; font-weight:800;">
+                    <input type="checkbox" id="bulk-apply-inventory">
+                    Update stok inventori
+                </label>
+                <button class="btn-text" type="button" onclick="closeBulkImportModal()">Tutup</button>
+                <button class="btn-primary" type="button" onclick="submitBulkImport()" style="width:auto;">Import</button>
+            </div>
+        </div>
+    </div>
+
     <div id="toast-container" class="toast-container"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="static/script.js?v=1.8"></script>
+    <script src="static/script.js?v=2.6"></script>
 </body>
 </html>

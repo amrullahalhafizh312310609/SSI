@@ -285,7 +285,7 @@ body {
 .sidebar .brand {
     width: 100%;
     flex-direction: column;
-    align-items: center;
+    align-items: flex-start;
     gap: 10px;
     padding: 0;
 }
@@ -305,7 +305,8 @@ body {
 }
 
 .sidebar .brand .brand-icon {
-    width: 220px;
+    width: 100%;
+    max-width: 220px;
     height: 64px;
     border-radius: 16px;
 }
@@ -323,7 +324,7 @@ body {
 }
 
 .sidebar .brand span {
-    text-align: center;
+    text-align: left;
     font-size: 0.95rem;
     line-height: 1.15;
     max-width: 220px;
@@ -484,6 +485,39 @@ body {
     font-weight: 800;
     color: var(--text-main);
     letter-spacing: -1px;
+}
+
+.welcome-section {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.welcome-text {
+    min-width: 260px;
+    flex: 1;
+}
+
+.welcome-brand {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex: 0 0 auto;
+}
+
+.welcome-section .brand-icon {
+    width: 220px;
+    height: 64px;
+    border-radius: 16px;
+}
+
+.welcome-section .brand-icon img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
 }
 
 .welcome-section p {

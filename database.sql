@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     company_name VARCHAR(255) NOT NULL,
     item_name VARCHAR(255) NOT NULL,
     unit VARCHAR(50) NOT NULL,
+    doc_number VARCHAR(100) NULL,
     qty_out INT NOT NULL DEFAULT 0,
     qty_in INT NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
