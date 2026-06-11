@@ -545,6 +545,11 @@ body {
     transition: var(--transition);
 }
 
+.kpi-card.kpi-card--danger {
+    background: linear-gradient(135deg, rgba(220, 38, 38, 0.10), rgba(79, 70, 229, 0.06));
+    border-color: rgba(220, 38, 38, 0.28);
+}
+
 .kpi-card:hover {
     transform: translateY(-2px);
     box-shadow: var(--shadow-premium);

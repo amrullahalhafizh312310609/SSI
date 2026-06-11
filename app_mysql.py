@@ -40,7 +40,12 @@ except Exception:
     tf = None
 
 app = Flask(__name__, static_folder='static')
-CORS(app) # Mengizinkan akses dari domain lain (seperti GitHub Pages)
+CORS(
+    app,
+    resources={r"/api/*": {"origins": "*"}},
+    allow_headers=["Content-Type", "X-Auth-Token"],
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+)
 app.url_map.strict_slashes = False
 
 # Konfigurasi Database MySQL

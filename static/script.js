@@ -28,6 +28,7 @@ let _restockMemo = { ts: 0, items: [], map: new Map() };
 const ROP_ALERT_KEY = 'gudang_rop_alerts_v1';
 const ROP_ALERT_COOLDOWN_MS = 30 * 60 * 1000;
 const TOAST_DEDUPE_WINDOW_MS = 12 * 1000;
+let _unauthorizedHandled = false;
 const UNIT_OPTIONS = [
     { value: 'pcs', label: 'Pieces (pcs)' },
     { value: 'kg', label: 'Kilogram (kg)' },
@@ -121,6 +122,32 @@ function showToast(message, type = 'info', title = '') {
         toast.classList.remove('show');
         setTimeout(() => toast.remove(), 220);
     }, 2600);
+}
+
+function _normKeyText(value) {
+    return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, ' ');
+}
+
+function _buildCompanyItemKey(perusahaan, barang) {
+    const p = _normKeyText(perusahaan);
+    const b = _normKeyText(barang);
+    if (!p || !b) return '';
+    return `${p}|${b}`;
+}
+
+function _handleUnauthorizedOnce() {
+    if (_unauthorizedHandled) return;
+    _unauthorizedHandled = true;
+    sessionStorage.removeItem('gudang_isLoggedIn');
+    sessionStorage.removeItem('gudang_token');
+    const loginPage = document.getElementById('login-page');
+    const mainApp = document.getElementById('main-app');
+    if (loginPage) loginPage.style.display = 'flex';
+    if (mainApp) mainApp.style.display = 'none';
+    showToast('Sesi login habis. Silakan login ulang.', 'error');
 }
 
 function getPersistedRopAlerts() {
@@ -233,7 +260,7 @@ async function addHistoryEntryFromUI() {
 
     try {
         const token = sessionStorage.getItem('gudang_token') || '';
-        const response = await fetch(`${API_BASE_URL}/api/history`, {
+        const response = await fetchApiWithFallback(`/api/history`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token },
             body: JSON.stringify(entry)
@@ -292,7 +319,7 @@ async function fetchApiWithFallback(path, options = {}) {
     };
 
     add(API_BASE_URL);
-    add('');
+    if (!isGitHubPages) add('');
     if (isFileProtocol) {
         add(LOCAL_API_URL);
     } else if (isLocalhost) {
@@ -308,6 +335,9 @@ async function fetchApiWithFallback(path, options = {}) {
             const res = await fetch(_joinApi(base, path), options);
             lastResponse = res;
             if (res.status === 404) continue;
+            if (res.status === 401) {
+                _handleUnauthorizedOnce();
+            }
             return res;
         } catch (e) {
             lastNetworkError = e;
@@ -339,7 +369,7 @@ async function getInventory() {
     }
     const localData = localStorage.getItem('gudang_inventory');
     const fallback = localData ? JSON.parse(localData) : initialInventory;
-    if ((!fallback || (Array.isArray(fallback) && fallback.length === 0)) && !_inventoryFetchErrorShown && !isGitHubPages) {
+    if ((!fallback || (Array.isArray(fallback) && fallback.length === 0)) && !_inventoryFetchErrorShown) {
         _inventoryFetchErrorShown = true;
         showToast('Tidak bisa mengambil data inventori dari server. Pastikan backend berjalan dan database terhubung.', 'error');
     }
@@ -446,7 +476,7 @@ async function getRestockMapMemo() {
     const map = new Map();
     if (Array.isArray(items)) {
         items.forEach(it => {
-            const key = `${String(it.perusahaan || '').trim()}|${String(it.barang || '').trim()}`;
+            const key = _buildCompanyItemKey(it.perusahaan, it.barang);
             if (!key) return;
             map.set(key, it);
         });
@@ -495,7 +525,7 @@ function notifyRopAlerts(items) {
     if (!reorderItems.length) return;
     const activeKeys = new Set(
         reorderItems
-            .map(it => `${String(it.perusahaan || '').trim()}|${String(it.barang || '').trim()}`)
+            .map(it => _buildCompanyItemKey(it.perusahaan, it.barang))
             .filter(Boolean)
     );
     Array.from(ropAlertedKeys).forEach(key => {
@@ -508,7 +538,7 @@ function notifyRopAlerts(items) {
     const newAlerts = [];
 
     reorderItems.forEach(it => {
-        const key = `${String(it.perusahaan || '').trim()}|${String(it.barang || '').trim()}`;
+        const key = _buildCompanyItemKey(it.perusahaan, it.barang);
         if (!key || ropAlertedKeys.has(key)) return;
 
         const lastShown = Number(persisted[key] || 0);
@@ -541,14 +571,9 @@ async function saveInventory(inventory, options = {}) {
     lastInventoryData = JSON.stringify(inventory);
     _inventoryMemo = { ts: Date.now(), data: inventory };
 
-    if (isGitHubPages) {
-        if (!silent) showToast('Tersimpan di browser (Mode GitHub)', 'info');
-        return true;
-    }
-
     try {
         const token = sessionStorage.getItem('gudang_token') || '';
-        const response = await fetch(`${API_BASE_URL}/api/inventory`, {
+        const response = await fetchApiWithFallback(`/api/inventory`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token },
             body: JSON.stringify({ inventory: inventory })
@@ -582,7 +607,7 @@ async function updateKpiCards() {
     const totalItems = inventory.length;
     const availableItems = inventory.filter(i => i.status === 'Ada' && Number(i.stok) > 0).length;
     const restockList = await getRestockList();
-    const restockItems = Array.isArray(restockList) ? restockList.length : 0;
+    const restockItems = Array.isArray(restockList) ? restockList.filter(r => Boolean(r?.reorder_needed)).length : 0;
 
     const totalEl = document.getElementById('kpi-total-items');
     const availEl = document.getElementById('kpi-available-items');
@@ -593,6 +618,11 @@ async function updateKpiCards() {
     if (availEl) availEl.textContent = availableItems.toLocaleString('id-ID');
     if (restockEl) restockEl.textContent = restockItems.toLocaleString('id-ID');
     if (companyEl) companyEl.textContent = companies.length.toLocaleString('id-ID');
+
+    const restockCard = document.getElementById('kpi-card-restock');
+    if (restockCard) {
+        restockCard.classList.toggle('kpi-card--danger', restockItems > 0);
+    }
 }
 
 let transactionChart = null;
@@ -934,7 +964,7 @@ function handleLogin() {
             const username = userElem.value.trim();
             const password = passElem.value.trim();
 
-            const response = await fetch(`${API_BASE_URL}/api/login`, {
+            const response = await fetchApiWithFallback(`/api/login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username, password })
@@ -1172,10 +1202,11 @@ async function fetchInventory() {
     
     tbody.innerHTML = filtered.map(item => {
         const statusClass = item.status === 'Ada' ? 'ada' : 'tidak-ada';
-        const key = `${String(item.perusahaan || '').trim()}|${String(item.barang || '').trim()}`;
-        const ropInfo = restockMap.get(key);
-        const ropBadge = ropInfo ? `<span class="rop-badge rop-badge--danger" style="white-space:nowrap;">ROP</span>` : '';
-        const rowStyle = ropInfo ? ` style="background: rgba(220, 38, 38, 0.06);"` : '';
+        const key = _buildCompanyItemKey(item.perusahaan, item.barang);
+        const ropInfo = key ? restockMap.get(key) : null;
+        const isRop = Boolean(ropInfo?.reorder_needed);
+        const ropBadge = isRop ? `<span class="rop-badge rop-badge--danger" style="white-space:nowrap;">ROP</span>` : '';
+        const rowStyle = isRop ? ` style="background: rgba(220, 38, 38, 0.06);"` : '';
         return `
             <tr${rowStyle}>
                 <td>${item.perusahaan}</td>
@@ -1348,7 +1379,7 @@ async function addStockInEntryFromUI() {
 
     try {
         const token = sessionStorage.getItem('gudang_token') || '';
-        const response = await fetch(`${API_BASE_URL}/api/stock-in`, {
+        const response = await fetchApiWithFallback(`/api/stock-in`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token },
             body: JSON.stringify({ tanggal, perusahaan, nama_barang, satuan, qty_in })
@@ -1383,47 +1414,33 @@ async function submitNewInventory() {
         return;
     }
 
-    if (isGitHubPages) {
-        const inventory = await getInventory();
-        const newId = inventory.length > 0 ? Math.max(...inventory.map(i => i.id)) + 1 : 1;
-        inventory.push({
-            id: newId,
-            perusahaan,
-            barang,
-            satuan,
-            stok: parseInt(stok),
-            status: parseInt(stok) > 0 ? "Ada" : "Tidak Ada",
-            lokasi
+    try {
+        const token = sessionStorage.getItem('gudang_token') || '';
+        const response = await fetchApiWithFallback(`/api/inventory/add`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token },
+            body: JSON.stringify({
+                perusahaan: String(perusahaan).trim(),
+                barang: String(barang).trim(),
+                satuan: String(satuan || 'pcs').trim(),
+                stok: parseInt(stok, 10),
+                lokasi: String(lokasi).trim()
+            })
         });
-        const ok = await saveInventory(inventory);
-        if (ok) showToast("Barang berhasil ditambahkan.", "success");
-    } else {
-        try {
-            const token = sessionStorage.getItem('gudang_token') || '';
-            const response = await fetch(`${API_BASE_URL}/api/inventory/add`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token },
-                body: JSON.stringify({
-                    perusahaan: String(perusahaan).trim(),
-                    barang: String(barang).trim(),
-                    satuan: String(satuan || 'pcs').trim(),
-                    stok: parseInt(stok, 10),
-                    lokasi: String(lokasi).trim()
-                })
-            });
-            if (!response.ok) {
-                const err = await response.json().catch(() => ({}));
-                showToast(err.message || "Gagal menambah barang.", "error");
-                return;
-            }
-            showToast("Barang berhasil ditambahkan.", "success");
-        } catch (e) {
-            console.error("Add inventory error:", e);
-            showToast("Terjadi kesalahan jaringan.", "error");
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            showToast(err.message || "Gagal menambah barang.", "error");
             return;
         }
+        showToast("Barang berhasil ditambahkan.", "success");
+    } catch (e) {
+        console.error("Add inventory error:", e);
+        showToast("Terjadi kesalahan jaringan.", "error");
+        return;
     }
     
+    _inventoryMemo = { ts: 0, data: null };
+    lastInventoryData = null;
     toggleAddForm();
     await fetchInventory();
     await populateCompanyDropdowns();
@@ -1434,20 +1451,9 @@ async function deleteInventoryItem(id) {
     const okConfirm = confirm('Hapus barang ini?');
     if (!okConfirm) return;
 
-    if (isGitHubPages) {
-        const inventory = await getInventory();
-        const next = inventory.filter(i => Number(i.id) !== Number(id));
-        await saveInventory(next, { silent: true });
-        showToast('Barang dihapus.', 'success');
-        await fetchInventory();
-        await populateCompanyDropdowns();
-        await updateKpiCards();
-        return;
-    }
-
     try {
         const token = sessionStorage.getItem('gudang_token') || '';
-        const response = await fetch(`${API_BASE_URL}/api/inventory/${encodeURIComponent(String(id))}`, {
+        const response = await fetchApiWithFallback(`/api/inventory/${encodeURIComponent(String(id))}`, {
             method: 'DELETE',
             headers: { 'X-Auth-Token': token }
         });
@@ -1457,6 +1463,8 @@ async function deleteInventoryItem(id) {
             return;
         }
         showToast('Barang dihapus.', 'success');
+        _inventoryMemo = { ts: 0, data: null };
+        lastInventoryData = null;
         await fetchInventory();
         await populateCompanyDropdowns();
         await updateKpiCards();
