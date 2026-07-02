@@ -819,6 +819,25 @@ async function startPolling() {
     }, 5000); // Polling every 5s for better performance
 }
 
+// Z-score helper
+function getZScore(serviceLevel) {
+    const sl = Number(serviceLevel);
+    if (sl >= 0.99) return 2.33;
+    if (sl >= 0.95) return 1.65;
+    if (sl >= 0.90) return 1.28;
+    return 1.65;
+}
+
+// Update Z-score display
+function updateZScoreDisplay() {
+    const slSelect = document.getElementById('service-level');
+    const zDisplay = document.getElementById('z-score-display');
+    if (!slSelect || !zDisplay) return;
+    const z = getZScore(slSelect.value);
+    const slPercent = Math.round(parseFloat(slSelect.value) * 100);
+    zDisplay.innerHTML = `Service level ${slPercent}% → Z = ${z.toFixed(2)}`;
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
     console.log("Gudang PT. SSI - System Ready");
     try {
@@ -849,12 +868,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             const dd = String(firstNextMonth.getDate()).padStart(2, '0');
             predDate.value = `${yyyy}-${mm}-${dd}`;
         }
+
+        // Initialize Z-score display
+        updateZScoreDisplay();
+        const slSelect = document.getElementById('service-level');
+        if (slSelect) {
+            slSelect.addEventListener('change', updateZScoreDisplay);
+        }
         
         await populateCompanyDropdowns();
         await updateKpiCards();
-        const h = await getHistory(1000, 0);
         await renderRestockList();
-        initChart(h);
         
         // Show default section
         showSection('dashboard');
@@ -1619,7 +1643,7 @@ async function refreshPredictionLogs() {
     if (!rows.length) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="10" style="text-align:center; color: var(--muted); padding: 1rem;">
+                <td colspan="12" style="text-align:center; color: var(--muted); padding: 1rem;">
                     Belum ada data prediksi.
                 </td>
             </tr>
@@ -1637,7 +1661,9 @@ async function refreshPredictionLogs() {
                 <td>${r.perusahaan || '-'}</td>
                 <td>${r.nama_barang || '-'}</td>
                 <td>${(r.target_month || '').slice(0, 10) || '-'}</td>
-                <td>${r.algorithm || '-'}</td>
+                <td>${r.algorithm || r.metode || 'Formula Statistik'}</td>
+                <td>${Number(r.avg_demand || r.avgDemand || 0).toLocaleString('id-ID')}</td>
+                <td>${Number(r.std_dev || r.stdDev || 0).toLocaleString('id-ID')}</td>
                 <td>${Number(r.prediction || 0).toLocaleString('id-ID')}</td>
                 <td>${Number(r.current_stock || 0).toLocaleString('id-ID')}</td>
                 <td>${Number(r.needed_stock || 0).toLocaleString('id-ID')}</td>
@@ -2861,8 +2887,10 @@ async function predictStock() {
     const tInput = document.getElementById('tanggal');
     const leadTimeInput = document.getElementById('lead-time');
     const serviceLevelSelect = document.getElementById('service-level');
+    const avgDemandInput = document.getElementById('avg-demand');
+    const stdDevInput = document.getElementById('std-dev');
     
-    if (!pSelect || !bSelect || !tInput) return;
+    if (!pSelect || !bSelect || !tInput || !avgDemandInput) return;
 
     const p = pSelect.value;
     const b = bSelect.value;
@@ -2870,16 +2898,21 @@ async function predictStock() {
     const t = tInput.value;
     const lead_time = parseInt(leadTimeInput?.value || '3', 10);
     const service_level = parseFloat(serviceLevelSelect?.value || '0.95');
-    const algorithm = 'xgboost';
+    const avg_demand = parseInt(avgDemandInput.value || '0', 10);
+    const std_dev = parseInt(stdDevInput?.value || '0', 10);
 
     const res = document.getElementById('result');
     const unitLabel = document.getElementById('result-unit');
     const locLabel = document.getElementById('storage-location');
 
+    // Input validation
     if (!p || !b || !t) return showToast("Lengkapi data prediksi terlebih dahulu.", "error");
     if (!Number.isFinite(lead_time) || lead_time <= 0) {
         if (leadTimeInput) leadTimeInput.value = '1';
         return showToast("Lead time harus lebih dari 0.", "error");
+    }
+    if (!Number.isFinite(avg_demand) || avg_demand <= 0) {
+        return showToast("Rata-rata permintaan harus diisi dan lebih dari 0.", "error");
     }
 
     if (res) res.innerText = "...";
@@ -2887,66 +2920,83 @@ async function predictStock() {
     const needStockVal = document.getElementById('needed-stock-val');
     const safetyStockVal = document.getElementById('safety-stock-val');
     const ropVal = document.getElementById('rop-val');
-    const metricMae = document.getElementById('metric-mae');
-    const metricRmse = document.getElementById('metric-rmse');
-    const metricMape = document.getElementById('metric-mape');
-    const metricAcc = document.getElementById('metric-acc');
+    const avgDemandInputVal = document.getElementById('avg-demand-input-val');
+    const stdDevInputVal = document.getElementById('std-dev-input-val');
     const ropStatusVal = document.getElementById('rop-status-val');
+    const calculationStepsDiv = document.getElementById('calculation-steps');
+    const warningBadge = document.getElementById('input-warning');
+
     if (curStockVal) curStockVal.innerText = "...";
     if (needStockVal) needStockVal.innerText = "...";
     if (safetyStockVal) safetyStockVal.innerText = "...";
     if (ropVal) ropVal.innerText = "...";
-    if (metricMae) metricMae.innerText = "...";
-    if (metricRmse) metricRmse.innerText = "...";
-    if (metricMape) metricMape.innerText = "...";
-    if (metricAcc) metricAcc.innerText = "...";
+    if (avgDemandInputVal) avgDemandInputVal.innerText = "...";
+    if (stdDevInputVal) stdDevInputVal.innerText = "...";
     if (ropStatusVal) ropStatusVal.innerText = "...";
     
     if (res) res.classList.add('loading-pulse');
 
     try {
-        const response = await fetchApiWithFallback(`/api/predict`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                perusahaan: p,
-                nama_barang: b,
-                target_date: t,
-                lead_time: lead_time,
-                service_level: Number.isFinite(service_level) ? service_level : 0.95,
-                algorithm
-            })
-        });
+        // Get current inventory data
+        const inventory = await getInventory();
+        const item = inventory.find(i => i.perusahaan === p && i.barang === b);
+        const current_stock = Number(item?.stock || 0);
+        const lokasi = item?.lokasi || "Belum Ditentukan";
 
-        if (!response.ok) {
-            const msg = await readApiErrorMessage(response);
-            showToast(msg || 'Gagal menghitung prediksi.', 'error');
-            if (res) res.classList.remove('loading-pulse');
-            return;
-        }
+        // Calculate using statistical formulas
+        const z = getZScore(service_level);
+        const lead_time_days = lead_time;
+        const avg_demand_daily = avg_demand / 30; // Assume 30 days in a month
+        const std_dev_daily = std_dev / Math.sqrt(30); // Daily std dev
 
-        const data = await response.json();
-        const prediction = Number(data.prediction || 0);
-        const current_stock = Number(data.current_stock || 0);
-        const needed_stock = Number(data.needed_stock || 0);
-        const safety_stock = Number(data.safety_stock || 0);
-        const reorder_point = Number(data.reorder_point || 0);
-        const lokasi = data.lokasi || "Belum Ditentukan";
-        currentPredictItemId = Number(data.inventory_id || 0) || null;
+        const safety_stock = Math.ceil(z * std_dev_daily * Math.sqrt(lead_time_days));
+        const reorder_point = Math.ceil(avg_demand_daily * lead_time_days + safety_stock);
+        
+        // Predict next month's demand (1 month = 30 days)
+        const prediction = Math.ceil(avg_demand); // Next month's demand is the avg monthly demand
+        const needed_stock = Math.max(0, prediction - current_stock);
+        
+        const reorderNeeded = current_stock <= reorder_point;
+
+        // Update last forecast result
         lastForecastResult = {
-            perusahaan: String(data.perusahaan || p),
-            nama_barang: String(data.nama_barang || b),
-            target_month: String(data.target_month || ''),
-            prediction: Number(data.prediction || 0),
-            needed_stock: Number(data.needed_stock || 0),
-            unit: String(data.unit || s || ''),
-            lead_time: Number(data.lead_time || lead_time),
-            service_level: Number(data.service_level || service_level),
-            algorithm: String(data.algorithm || algorithm)
+            perusahaan: p,
+            nama_barang: b,
+            target_month: t,
+            prediction: prediction,
+            needed_stock: needed_stock,
+            unit: s || item?.satuan || 'unit',
+            lead_time: lead_time,
+            service_level: service_level,
+            algorithm: 'Formula Statistik'
         };
 
-        const isHistoryEmpty = Boolean(data.cold_start);
-        const reorderNeeded = Boolean(data.reorder_needed);
+        // Save prediction log
+        try {
+            const token = sessionStorage.getItem('gudang_token') || '';
+            await fetchApiWithFallback(`/api/prediction-log`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token },
+                body: JSON.stringify({
+                    perusahaan: p,
+                    nama_barang: b,
+                    target_month: t,
+                    algorithm: 'Formula Statistik',
+                    avg_demand: avg_demand,
+                    std_dev: std_dev,
+                    prediction: prediction,
+                    current_stock: current_stock,
+                    needed_stock: needed_stock,
+                    safety_stock: safety_stock,
+                    reorder_point: reorder_point,
+                    reorder_needed: reorderNeeded,
+                    lead_time: lead_time,
+                    service_level: service_level
+                })
+            });
+        } catch (e) {
+            console.warn("Failed to save prediction log, but continuing:", e);
+        }
 
         setTimeout(() => {
             if (res) animateValue(res, 0, prediction, 1000);
@@ -2955,16 +3005,8 @@ async function predictStock() {
             if (safetyStockVal) animateValue(safetyStockVal, 0, safety_stock, 1000);
             if (ropVal) animateValue(ropVal, 0, reorder_point, 1000);
 
-            if (metricMae) metricMae.innerText = (data.metrics?.mae ?? 0).toFixed(2);
-            if (metricRmse) metricRmse.innerText = (data.metrics?.rmse ?? 0).toFixed(2);
-            if (metricMape) {
-                const mape = Number(data.metrics?.mape ?? 0);
-                metricMape.innerText = `${mape.toFixed(2)}%`;
-            }
-            if (metricAcc) {
-                const acc = Number(data.metrics?.accuracy ?? data.accuracy ?? 0);
-                metricAcc.innerText = `${acc.toFixed(1)}%`;
-            }
+            if (avgDemandInputVal) avgDemandInputVal.innerText = avg_demand.toLocaleString('id-ID');
+            if (stdDevInputVal) stdDevInputVal.innerText = std_dev.toLocaleString('id-ID');
 
             if (ropStatusVal) {
                 ropStatusVal.innerText = reorderNeeded ? 'Reorder' : 'Aman';
@@ -2972,37 +3014,67 @@ async function predictStock() {
                 ropStatusVal.classList.toggle('rop-badge--success', !reorderNeeded);
             }
 
-            const warningBadge = document.getElementById('history-warning');
-            if (isHistoryEmpty) {
-                if (warningBadge) {
-                    const warningText = warningBadge.querySelector('span');
-                    const points = Number(data.history_points || 0);
-                    const minMonths = Number(data.min_history_months || 3);
-                    const reason = String(data.cold_start_reason || '').trim();
-                    if (warningText) {
-                        if (reason) {
-                            warningText.textContent = reason;
-                        } else if (points > 0) {
-                            warningText.textContent = `Riwayat transaksi belum cukup (${points} bulan). Minimal ${minMonths} bulan data disarankan untuk prediksi akurat.`;
-                        } else {
-                            warningText.textContent = `Riwayat transaksi belum tersedia. Minimal ${minMonths} bulan data disarankan untuk prediksi akurat.`;
-                        }
-                    }
-                    warningBadge.style.display = 'flex';
-                }
-            } else {
-                if (warningBadge) warningBadge.style.display = 'none';
+            // Hide history warning, show input warning only if needed
+            if (warningBadge) warningBadge.style.display = 'none';
+
+            // Render calculation steps
+            if (calculationStepsDiv) {
+                const slPercent = Math.round(service_level * 100);
+                calculationStepsDiv.innerHTML = `
+                    <div class="form-container" style="padding: 1rem;">
+                        <h4 style="margin-bottom: 0.75rem; color: var(--primary);">Langkah Perhitungan</h4>
+                        
+                        <div style="background: var(--bg-main); padding: 1rem; border-radius: 0.5rem; margin-bottom: 0.75rem;">
+                            <div style="font-weight: 600; margin-bottom: 0.5rem;">1. Rata-rata Permintaan Harian</div>
+                            <div style="font-family: monospace; font-size: 0.9rem;">
+                                $\bar{D}_{\text{harian}} = \frac{\bar{D}_{\text{bulanan}}}{30} = \frac{${avg_demand}}{30} = ${avg_demand_daily.toFixed(2)}$ unit/hari
+                            </div>
+                        </div>
+
+                        <div style="background: var(--bg-main); padding: 1rem; border-radius: 0.5rem; margin-bottom: 0.75rem;">
+                            <div style="font-weight: 600; margin-bottom: 0.5rem;">2. Standar Deviasi Permintaan Harian</div>
+                            <div style="font-family: monospace; font-size: 0.9rem;">
+                                $\sigma_{\text{harian}} = \frac{\sigma_{\text{bulanan}}}{\sqrt{30}} = \frac{${std_dev}}{\sqrt{30}} = ${std_dev_daily.toFixed(2)}$ unit/hari
+                            </div>
+                        </div>
+
+                        <div style="background: var(--bg-main); padding: 1rem; border-radius: 0.5rem; margin-bottom: 0.75rem;">
+                            <div style="font-weight: 600; margin-bottom: 0.5rem;">3. Safety Stock</div>
+                            <div style="font-family: monospace; font-size: 0.9rem;">
+                                $SS = Z \times \sigma_{\text{harian}} \times \sqrt{LT} = ${z} \times ${std_dev_daily.toFixed(2)} \times \sqrt{${lead_time_days}} = ${safety_stock}$ unit
+                            </div>
+                            <div style="margin-top: 0.5rem; color: var(--text-muted); font-size: 0.85rem;">
+                                Dimana: Z = ${z} (Service Level ${slPercent}%), LT = ${lead_time_days} hari
+                            </div>
+                        </div>
+
+                        <div style="background: var(--bg-main); padding: 1rem; border-radius: 0.5rem; margin-bottom: 0.75rem;">
+                            <div style="font-weight: 600; margin-bottom: 0.5rem;">4. Reorder Point (ROP)</div>
+                            <div style="font-family: monospace; font-size: 0.9rem;">
+                                $ROP = (\bar{D}_{\text{harian}} \times LT) + SS = (${avg_demand_daily.toFixed(2)} \times ${lead_time_days}) + ${safety_stock} = ${reorder_point}$ unit
+                            </div>
+                        </div>
+
+                        <div style="background: var(--bg-main); padding: 1rem; border-radius: 0.5rem;">
+                            <div style="font-weight: 600; margin-bottom: 0.5rem;">5. Estimasi Kebutuhan Bulan Berikutnya</div>
+                            <div style="font-family: monospace; font-size: 0.9rem;">
+                                $Prediksi = \bar{D}_{\text{bulanan}} = ${avg_demand}$ unit
+                            </div>
+                            <div style="margin-top: 0.5rem; font-family: monospace; font-size: 0.9rem;">
+                                $Perlu Ditambah = \max(0, Prediksi - Stok Saat Ini) = \max(0, ${prediction} - ${current_stock}) = ${needed_stock}$ unit
+                            </div>
+                        </div>
+                    </div>
+                `;
             }
 
-            renderPredictChart(data.history_series || [], data.target_month || '', prediction);
-
-            if (unitLabel) unitLabel.innerText = String(data.unit || s || 'unit').toUpperCase();
+            if (unitLabel) unitLabel.innerText = String(s || item?.satuan || 'unit').toUpperCase();
             if (locLabel) locLabel.innerText = lokasi;
             if (res) res.classList.remove('loading-pulse');
         }, 500);
     } catch (e) {
         console.error("Predict error:", e);
-        showToast('Terjadi kesalahan jaringan saat prediksi.', 'error');
+        showToast('Terjadi kesalahan saat prediksi.', 'error');
         if (res) res.classList.remove('loading-pulse');
     }
 }

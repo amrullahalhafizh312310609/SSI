@@ -144,7 +144,9 @@ def _ensure_prediction_logs_table(cursor):
                 mae DOUBLE NULL,
                 rmse DOUBLE NULL,
                 r2 DOUBLE NULL,
-                mape DOUBLE NULL
+                mape DOUBLE NULL,
+                avg_demand DOUBLE NULL,
+                std_dev DOUBLE NULL
             )
             """.strip()
         )
@@ -154,6 +156,10 @@ def _ensure_prediction_logs_table(cursor):
             cursor.execute("ALTER TABLE prediction_logs ADD COLUMN algorithm VARCHAR(50) NULL")
         if not _has_column(cursor, "prediction_logs", "mape"):
             cursor.execute("ALTER TABLE prediction_logs ADD COLUMN mape DOUBLE NULL")
+        if not _has_column(cursor, "prediction_logs", "avg_demand"):
+            cursor.execute("ALTER TABLE prediction_logs ADD COLUMN avg_demand DOUBLE NULL")
+        if not _has_column(cursor, "prediction_logs", "std_dev"):
+            cursor.execute("ALTER TABLE prediction_logs ADD COLUMN std_dev DOUBLE NULL")
     except Exception:
         return
 
@@ -1074,8 +1080,8 @@ def predict():
                 """
                 INSERT INTO prediction_logs
                     (company_name, item_name, target_month, lead_time, service_level, algorithm, prediction, current_stock, needed_stock,
-                     safety_stock, reorder_point, reorder_needed, accuracy, mae, rmse, r2, mape)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     safety_stock, reorder_point, reorder_needed, accuracy, mae, rmse, r2, mape, avg_demand, std_dev)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """.strip(),
                 (
                     perusahaan, nama_barang, target_month_iso[:10] if target_month_iso else None,
@@ -1083,7 +1089,9 @@ def predict():
                     int(safety_stock), int(reorder_point), 1 if reorder_needed else 0,
                     _safe_float(metrics.get("accuracy")),
                     _safe_float(metrics.get("mae")), _safe_float(metrics.get("rmse")), _safe_float(metrics.get("r2")),
-                    _safe_float(metrics.get("mape"))
+                    _safe_float(metrics.get("mape")),
+                    _safe_float(avg_demand),
+                    _safe_float(std_demand)
                 )
             )
             conn.commit()
@@ -1138,6 +1146,65 @@ def predict():
             cursor.close()
         conn.close()
 
+@app.route('/api/prediction-log', methods=['POST'])
+def add_prediction_log():
+    auth_err = _require_auth()
+    if auth_err:
+        return auth_err
+
+    payload = request.json or {}
+    perusahaan = _norm_text(payload.get('perusahaan'))
+    nama_barang = _norm_text(payload.get('nama_barang'))
+    target_month_iso = payload.get('target_month')
+    algorithm = payload.get('algorithm', 'Formula Statistik')
+    avg_demand = _safe_float(payload.get('avg_demand'))
+    std_dev = _safe_float(payload.get('std_dev'))
+    prediction = _safe_int(payload.get('prediction'))
+    current_stock = _safe_int(payload.get('current_stock'))
+    needed_stock = _safe_int(payload.get('needed_stock'))
+    safety_stock = _safe_int(payload.get('safety_stock'))
+    reorder_point = _safe_int(payload.get('reorder_point'))
+    reorder_needed = bool(payload.get('reorder_needed'))
+    lead_time = _safe_int(payload.get('lead_time'))
+    service_level = _safe_float(payload.get('service_level'))
+
+    if not perusahaan or not nama_barang or prediction is None:
+        return jsonify({"status": "error", "message": "perusahaan, nama_barang, dan prediction wajib diisi"}), 400
+
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({"status": "error", "message": "Database connection failed"}), 500
+
+    cursor = None
+    try:
+        cursor = conn.cursor()
+        _ensure_prediction_logs_table(cursor)
+
+        cursor.execute(
+            """
+            INSERT INTO prediction_logs
+                (company_name, item_name, target_month, lead_time, service_level, algorithm, prediction, current_stock, needed_stock,
+                 safety_stock, reorder_point, reorder_needed, avg_demand, std_dev)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """.strip(),
+            (
+                perusahaan, nama_barang, target_month_iso[:10] if target_month_iso else None,
+                lead_time, service_level, algorithm, prediction, current_stock, needed_stock,
+                safety_stock, reorder_point, 1 if reorder_needed else 0,
+                avg_demand, std_dev
+            )
+        )
+        conn.commit()
+        return jsonify({"status": "success", "id": cursor.lastrowid})
+    except Error as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+    finally:
+        if cursor:
+            cursor.close()
+        conn.close()
+
 @app.route('/api/predictions', methods=['GET'])
 def get_predictions():
     try:
@@ -1186,7 +1253,9 @@ def get_predictions():
                 mae,
                 rmse,
                 r2,
-                mape
+                mape,
+                avg_demand,
+                std_dev
             FROM prediction_logs
             ORDER BY created_at DESC, id DESC
             LIMIT %s OFFSET %s

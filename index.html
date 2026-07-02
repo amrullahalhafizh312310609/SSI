@@ -188,17 +188,7 @@
                         </div>
                     </div>
 
-                    <div class="card glassmorphism" style="margin-bottom: 2rem;">
-                        <div class="card-header">
-                            <div class="header-icon"><i class="fas fa-chart-line"></i></div>
-                            <h3>Tren Permintaan (12 Bulan Terakhir)</h3>
-                        </div>
-                        <div class="chart-box">
-                            <canvas id="transactionChart"></canvas>
-                        </div>
-                    </div>
-
-                    <div class="dashboard-grid no-chart">
+                    <div class="dashboard-grid">
                         <!-- Form Prediksi Section -->
                         <div class="card prediction-card glassmorphism">
                             <div class="card-header">
@@ -272,6 +262,30 @@
                                     </div>
                                 </div>
 
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label>Rata-rata Permintaan / Bulan (unit)</label>
+                                        <div class="custom-input-wrapper">
+                                            <i class="fas fa-chart-line select-icon"></i>
+                                            <input type="number" id="avg-demand" min="0" placeholder="Contoh: 250">
+                                        </div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Standar Deviasi Permintaan (σ)</label>
+                                        <div class="custom-input-wrapper">
+                                            <i class="fas fa-chart-bar select-icon"></i>
+                                            <input type="number" id="std-dev" min="0" placeholder="0" value="0">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="form-group">
+                                    <div class="layout-info">
+                                        <i class="fas fa-info-circle"></i>
+                                        <span id="z-score-display">Service level 95% → Z = 1.65</span>
+                                    </div>
+                                </div>
+
                                 <button class="btn-primary" onclick="predictStock()">
                                     <span>Hitung Prediksi</span>
                                 </button>
@@ -279,43 +293,11 @@
                                 <div class="divider"></div>
 
                                 <div class="action-buttons-row">
-                                    <button class="btn-action btn-history" type="button" onclick="toggleHistoryForm()">
-                                        <i class="fas fa-plus-circle"></i> Tambah Riwayat
-                                    </button>
-                                    <button class="btn-action btn-excel" type="button" onclick="downloadExcelTemplate('barang_keluar')">
-                                        <i class="fas fa-file-arrow-down"></i> Template Barang Keluar
-                                    </button>
-                                    <button class="btn-action btn-excel" type="button" onclick="openBulkImport('barang_keluar')">
-                                        <i class="fas fa-file-import"></i> Import Excel
-                                    </button>
                                     <button class="btn-action btn-excel" type="button" onclick="exportToExcel()">
                                         <i class="fas fa-file-export"></i> Ekspor Excel
                                     </button>
                                 </div>
-                                <input type="file" id="bulk-import-file" accept=".csv,.xlsx,.xls" style="display:none" onchange="handleBulkImportFile(this)">
 
-                                <div id="history-form" class="history-form" style="display: none;">
-                                    <div class="form-row">
-                                        <div class="form-group">
-                                            <label>Tanggal Transaksi</label>
-                                            <div class="custom-input-wrapper">
-                                                <i class="fas fa-calendar-check select-icon"></i>
-                                                <input type="date" id="history-date">
-                                            </div>
-                                        </div>
-                                        <div class="form-group">
-                                            <label>Jumlah Keluar</label>
-                                            <div class="custom-input-wrapper">
-                                                <i class="fas fa-arrow-up-right-dots select-icon"></i>
-                                                <input type="number" id="history-qty" min="0" placeholder="0">
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="form-actions">
-                                        <button class="btn-primary btn-small" type="button" onclick="addHistoryEntryFromUI()">Simpan Riwayat</button>
-                                        <button class="btn-text" type="button" onclick="toggleHistoryForm()">Tutup</button>
-                                    </div>
-                                </div>
                             </div>
                         </div>
 
@@ -325,9 +307,9 @@
                                 <h3>Hasil Estimasi</h3>
                             </div>
                             <div class="result-display">
-                                <div id="history-warning" class="warning-badge">
+                                <div id="input-warning" class="warning-badge">
                                     <i class="fas fa-exclamation-triangle"></i>
-                                    <span>Riwayat transaksi belum tersedia. Estimasi menggunakan data awal.</span>
+                                    <span>Isi rata-rata permintaan dan standar deviasi untuk menghitung estimasi.</span>
                                 </div>
 
                                 <div class="prediction-main">
@@ -335,11 +317,15 @@
                                     <div class="prediction-label">Estimasi Kebutuhan (<span id="result-unit">UNIT</span>)</div>
                                 </div>
 
-                            <div class="chart-box" style="margin-top: 1rem;">
-                                <canvas id="predictChart"></canvas>
-                            </div>
-                                
                                 <div class="stock-info-grid">
+                                    <div class="stock-info-item">
+                                        <div class="stock-info-label">Rata-rata Demand Input</div>
+                                        <div class="stock-info-value" id="avg-demand-input-val">0</div>
+                                    </div>
+                                    <div class="stock-info-item">
+                                        <div class="stock-info-label">Std Deviasi Input</div>
+                                        <div class="stock-info-value" id="std-dev-input-val">0</div>
+                                    </div>
                                     <div class="stock-info-item">
                                         <div class="stock-info-label">Stok Tersedia</div>
                                         <div class="stock-info-value" id="current-stock-val">0</div>
@@ -356,28 +342,19 @@
                                         <div class="stock-info-label">Reorder Point</div>
                                         <div class="stock-info-value" id="rop-val">0</div>
                                     </div>
-                                </div>
-
-                                <div class="stock-info-grid metrics-grid">
-                                    <div class="stock-info-item">
-                                        <div class="stock-info-label">MAE</div>
-                                        <div class="stock-info-value" id="metric-mae">-</div>
-                                    </div>
-                                    <div class="stock-info-item">
-                                        <div class="stock-info-label">RMSE</div>
-                                        <div class="stock-info-value" id="metric-rmse">-</div>
-                                    </div>
-                                    <div class="stock-info-item">
-                                        <div class="stock-info-label">MAPE</div>
-                                        <div class="stock-info-value" id="metric-mape">-</div>
-                                    </div>
-                                    <div class="stock-info-item">
-                                        <div class="stock-info-label">Akurasi</div>
-                                        <div class="stock-info-value" id="metric-acc">-</div>
-                                    </div>
                                     <div class="stock-info-item">
                                         <div class="stock-info-label">Status ROP</div>
                                         <div class="stock-info-value rop-badge" id="rop-status-val">-</div>
+                                    </div>
+                                </div>
+
+                                <div class="card glassmorphism" style="margin-top: 1.5rem;">
+                                    <div class="card-header">
+                                        <div class="header-icon"><i class="fas fa-calculator"></i></div>
+                                        <h3>Langkah Perhitungan</h3>
+                                    </div>
+                                    <div class="table-container" id="calculation-steps">
+                                        <p style="color: var(--text-muted); text-align: center; padding: 1rem;">Silakan hitung prediksi terlebih dahulu untuk melihat langkah perhitungan.</p>
                                     </div>
                                 </div>
 
@@ -505,7 +482,7 @@
                         <div class="header-with-action">
                                 <div>
                                     <h1>Data <span class="text-gradient">Stok</span></h1>
-                                    <p>Data stok dan transaksi digunakan sebagai input untuk forecast kebutuhan PPIC.</p>
+                                    <p>Data stok digunakan sebagai referensi perbandingan dengan hasil estimasi kebutuhan PPIC.</p>
                                 </div>
                                 <div class="header-buttons">
                                      <button class="btn-primary btn-small" onclick="toggleAddForm()">
@@ -758,7 +735,9 @@
                                         <th>Perusahaan</th>
                                         <th>Barang</th>
                                         <th>Target</th>
-                                        <th>Algoritma</th>
+                                        <th>Metode</th>
+                                        <th>Rata-rata Demand</th>
+                                        <th>Std Deviasi</th>
                                         <th>Prediksi</th>
                                         <th>Stok</th>
                                         <th>Perlu</th>
@@ -813,6 +792,6 @@
     <div id="toast-container" class="toast-container"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="static/script.js?v=2.8"></script>
+    <script src="static/script.js?v=2.9"></script>
 </body>
 </html>
