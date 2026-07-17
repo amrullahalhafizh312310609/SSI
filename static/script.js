@@ -3081,13 +3081,10 @@ async function predictStock() {
                             </div>
                         </div>
                     </div>
-                `;
-            }
-
-            if (unitLabel) unitLabel.innerText = String(s || item?.satuan || 'unit').toUpperCase();
+           if (unitLabel) unitLabel.innerText = String(s || item?.satuan || 'unit').toUpperCase();
             if (locLabel) locLabel.innerText = lokasi;
             if (res) res.classList.remove('loading-pulse');
-        }, 500);
+
     } catch (e) {
         console.error("Predict error:", e);
         showToast('Terjadi kesalahan saat prediksi.', 'error');
