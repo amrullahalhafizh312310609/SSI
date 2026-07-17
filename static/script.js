@@ -2938,12 +2938,13 @@ async function predictStock() {
         });
 
         // Tampilkan Langkah Perhitungan (Menggunakan tanda kutip biasa, aman dari kebocoran $)
+        // Bagian menampilkan langkah perhitungan di UI Analisis
         const calculationStepsDiv = document.getElementById('calculation-steps');
         if (calculationStepsDiv) {
             calculationStepsDiv.innerHTML = `
                 <div style="background: var(--bg-main); padding: 1rem; border-radius: 0.5rem; margin-bottom: 0.7rem;">
                     <div style="font-weight: 600; margin-bottom: 0.5rem;">1. Safety Stock (SS)</div>
-                    <div style="font-family: monospace; font-size: 0.9rem;">SS = 1.65 * Std Dev * $\\sqrt{\\text{LT}}$ = 1.65 * ${stdDev} * $\\sqrt{${lt}}$ = ${safetyStock} ${s}</div>
+                    <div style="font-family: monospace; font-size: 0.9rem;">SS = 1.65 * Std Dev * akar(LT) = 1.65 * ${stdDev} * akar(${lt}) = ${safetyStock} ${s}</div>
                 </div>
                 <div style="background: var(--bg-main); padding: 1rem; border-radius: 0.5rem; margin-bottom: 0.7rem;">
                     <div style="font-weight: 600; margin-bottom: 0.5rem;">2. Reorder Point (ROP)</div>
