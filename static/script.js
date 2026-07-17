@@ -299,10 +299,11 @@ const isFileProtocol = window.location.protocol === 'file:';
 const isLocalhost =
     window.location.hostname === 'localhost' ||
     window.location.hostname === '127.0.0.1';
-// GANTI URL INI dengan URL Backend Anda (misal dari Render.com) jika sudah hosting backend
+// GANTI URL INI dengan URL Backend Anda (misal dari Render.com/Railway) jika sudah hosting backend
 const REMOTE_API_URL = 'https://web-production-28984.up.railway.app'; 
 const LOCAL_API_URL = 'http://localhost:8000';
-const API_BASE_URL = isGitHubPages ? REMOTE_API_URL : (isFileProtocol ? LOCAL_API_URL : '');
+// Jika bukan localhost/file protocol (misal Netlify/Vercel/GitHub Pages), gunakan REMOTE_API_URL
+const API_BASE_URL = (!isLocalhost && !isFileProtocol) ? REMOTE_API_URL : (isFileProtocol ? LOCAL_API_URL : '');
 
 function _joinApi(baseUrl, path) {
     if (!baseUrl) return path;
