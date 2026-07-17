@@ -2881,92 +2881,123 @@ function getDayOfYear(date) {
 }
 
 async function predictStock() {
+    const pSelect = document.getElementById('perusahaan');
+    const bSelect = document.getElementById('nama_barang');
+    const sSelect = document.getElementById('satuan');
+    const tInput = document.getElementById('tanggal');
+    const leadTimeInput = document.getElementById('lead-time');
+    const serviceLevelSelect = document.getElementById('service-level');
+    const avgDemandInput = document.getElementById('avg-demand');
+    const stdDevInput = document.getElementById('std-dev');
+    
+    if (!pSelect || !bSelect || !tInput || !avgDemandInput) return;
+
+    const p = pSelect.value;
+    const b = bSelect.value;
+    const s = sSelect?.value || "";
+    const t = tInput.value;
+    const lead_time = parseInt(leadTimeInput?.value || '3', 10);
+    const service_level = parseFloat(serviceLevelSelect?.value || '0.95');
+    const avg_demand = parseInt(avgDemandInput.value || '0', 10);
+    const std_dev = parseInt(stdDevInput?.value || '0', 10);
+
     const res = document.getElementById('result');
+    const unitLabel = document.getElementById('result-unit');
+    const locLabel = document.getElementById('storage-location');
+
+    // Input validation
+    if (!p || !b || !t) return showToast("Lengkapi data prediksi terlebih dahulu.", "error");
+    if (!Number.isFinite(lead_time) || lead_time <= 0) {
+        if (leadTimeInput) leadTimeInput.value = '1';
+        return showToast("Lead time harus lebih dari 0.", "error");
+    }
+    if (!Number.isFinite(avg_demand) || avg_demand <= 0) {
+        return showToast("Rata-rata permintaan harus diisi dan lebih dari 0.", "error");
+    }
+
+    if (res) res.innerText = "...";
+    const curStockVal = document.getElementById('current-stock-val');
+    const needStockVal = document.getElementById('needed-stock-val');
+    const safetyStockVal = document.getElementById('safety-stock-val');
+    const ropVal = document.getElementById('rop-val');
+    const avgDemandInputVal = document.getElementById('avg-demand-input-val');
+    const stdDevInputVal = document.getElementById('std-dev-input-val');
+    const ropStatusVal = document.getElementById('rop-status-val');
+    const calculationStepsDiv = document.getElementById('calculation-steps');
+    const warningBadge = document.getElementById('input-warning');
+
+    if (curStockVal) curStockVal.innerText = "...";
+    if (needStockVal) needStockVal.innerText = "...";
+    if (safetyStockVal) safetyStockVal.innerText = "...";
+    if (ropVal) ropVal.innerText = "...";
+    if (avgDemandInputVal) avgDemandInputVal.innerText = "...";
+    if (stdDevInputVal) stdDevInputVal.innerText = "...";
+    if (ropStatusVal) ropStatusVal.innerText = "...";
+    
     if (res) res.classList.add('loading-pulse');
 
     try {
-        const p = document.getElementById('perusahaan')?.value;
-        const b = document.getElementById('nama_barang')?.value;
-        const s = document.getElementById('satuan')?.value;
-        const t = document.getElementById('tanggal')?.value;
+        // Get current inventory data
+        const inventory = await getInventory();
+        const item = inventory.find(i => i.perusahaan === p && i.barang === b);
+        const current_stock = Number(item?.stock || 0);
+        const lokasi = item?.lokasi || "Belum Ditentukan";
+
+        // Calculate using statistical formulas
+        const z = getZScore(service_level);
+        const lead_time_days = lead_time;
+        const avg_demand_daily = avg_demand / 30; // Assume 30 days in a month
+        const std_dev_daily = std_dev / Math.sqrt(30); // Daily std dev
+
+        const safety_stock = Math.ceil(z * std_dev_daily * Math.sqrt(lead_time_days));
+        const reorder_point = Math.ceil(avg_demand_daily * lead_time_days + safety_stock);
         
-        const lt = parseFloat(document.getElementById('lead-time')?.value) || 0;
-        const sl = parseFloat(document.getElementById('service-level')?.value) || 0;
-        const avgDemand = parseFloat(document.getElementById('avg-demand')?.value) || 0;
-        const stdDev = parseFloat(document.getElementById('std-dev')?.value) || 0;
-
-        if (!p || !b || !t) {
-            showToast("Mohon lengkapi data perusahaan, barang, dan tanggal prediksi.", "error");
-            if (res) res.classList.remove('loading-pulse');
-            return;
-        }
-
-        // Contoh kalkulasi sederhana (Silakan sesuaikan rumus aslinya jika ada)
-        const safetyStock = Math.ceil(1.65 * stdDev * Math.sqrt(lt)); 
-        const rop = Math.ceil((avgDemand * lt) + safetyStock);
-        const prediction = Math.ceil(avgDemand); 
-        const currentInventory = await getInventory();
-        const currentStockItem = currentInventory.find(i => i.barang === b && i.perusahaan === p);
-        const currentStock = currentStockItem ? parseInt(currentStockItem.stok) : 0;
-        const lokasi = currentStockItem ? currentStockItem.lokasi : '-';
-        const neededStock = Math.max(0, prediction - currentStock);
-
-        // Update UI Utama
-        const resultVal = document.getElementById('result');
-        if (resultVal) resultVal.innerText = prediction;
+        // Predict next month's demand (1 month = 30 days)
+        const prediction = Math.ceil(avg_demand); // Next month's demand is the avg monthly demand
+        const needed_stock = Math.max(0, prediction - current_stock);
         
-        const resultUnit = document.getElementById('result-unit');
-        if (resultUnit) resultUnit.innerText = String(s || 'unit').toUpperCase();
+        const reorderNeeded = current_stock <= reorder_point;
 
-        const locLabel = document.getElementById('storage-location');
-        if (locLabel) locLabel.innerText = lokasi;
-
-        // Update UI Detail Analisis
-        const elements = {
-            'current-stock-val': currentStock,
-            'needed-stock-val': neededStock,
-            'safety-stock-val': safetyStock,
-            'rop-val': rop,
-            'avg-demand-input-val': avgDemand,
-            'std-dev-input-val': stdDev,
-            'rop-status-val': currentStock <= rop ? "Perlu Reorder (Stok ≤ ROP)" : "Aman (Stok > ROP)"
+        // Update last forecast result
+        lastForecastResult = {
+            perusahaan: p,
+            nama_barang: b,
+            target_month: t,
+            prediction: prediction,
+            needed_stock: needed_stock,
+            unit: s || item?.satuan || 'unit',
+            lead_time: lead_time,
+            service_level: service_level,
+            algorithm: 'Formula Statistik'
         };
 
-        Object.keys(elements).forEach(id => {
-            const el = document.getElementById(id);
-            if (el) el.innerText = elements[id];
-        });
-
-        // Tampilkan Langkah Perhitungan (Menggunakan tanda kutip biasa, aman dari kebocoran $)
-        // Bagian menampilkan langkah perhitungan di UI Analisis
-        const calculationStepsDiv = document.getElementById('calculation-steps');
-        if (calculationStepsDiv) {
-            calculationStepsDiv.innerHTML = `
-                <div style="background: var(--bg-main); padding: 1rem; border-radius: 0.5rem; margin-bottom: 0.7rem;">
-                    <div style="font-weight: 600; margin-bottom: 0.5rem;">1. Safety Stock (SS)</div>
-                    <div style="font-family: monospace; font-size: 0.9rem;">SS = 1.65 * Std Dev * akar(LT) = 1.65 * ${stdDev} * akar(${lt}) = ${safetyStock} ${s}</div>
-                </div>
-                <div style="background: var(--bg-main); padding: 1rem; border-radius: 0.5rem; margin-bottom: 0.7rem;">
-                    <div style="font-weight: 600; margin-bottom: 0.5rem;">2. Reorder Point (ROP)</div>
-                    <div style="font-family: monospace; font-size: 0.9rem;">ROP = (Avg Demand * LT) + SS = (${avgDemand} * ${lt}) + ${safetyStock} = ${rop} ${s}</div>
-                </div>
-                <div style="background: var(--bg-main); padding: 1rem; border-radius: 0.5rem;">
-                    <div style="font-weight: 600; margin-bottom: 0.5rem;">3. Kebutuhan Tambahan</div>
-                    <div style="font-family: monospace; font-size: 0.9rem;">Perlu Ditambah = Max(0, Prediksi - Stok Saat Ini) = Max(0, ${prediction} - ${currentStock}) = ${neededStock} ${s}</div>
-                </div>
-            `;
+        // Save prediction log
+        try {
+            const token = sessionStorage.getItem('gudang_token') || '';
+            await fetchApiWithFallback(`/api/prediction-log`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token },
+                body: JSON.stringify({
+                    perusahaan: p,
+                    nama_barang: b,
+                    target_month: t,
+                    algorithm: 'Formula Statistik',
+                    avg_demand: avg_demand,
+                    std_dev: std_dev,
+                    prediction: prediction,
+                    current_stock: current_stock,
+                    needed_stock: needed_stock,
+                    safety_stock: safety_stock,
+                    reorder_point: reorder_point,
+                    reorder_needed: reorderNeeded,
+                    lead_time: lead_time,
+                    service_level: service_level
+                })
+            });
+        } catch (e) {
+            console.warn("Failed to save prediction log, but continuing:", e);
         }
 
-        const unitLabel = document.getElementById('unit-label');
-        if (unitLabel) unitLabel.innerText = String(s || 'unit').toUpperCase();
-        if (res) res.classList.remove('loading-pulse');
-
-    } catch (e) {
-        console.error("Predict error:", e);
-        showToast("Terjadi kesalahan saat prediksi.", "error");
-        if (res) res.classList.remove('loading-pulse');
-    }
-}
         setTimeout(() => {
             if (res) animateValue(res, 0, prediction, 1000);
             if (curStockVal) animateValue(curStockVal, 0, current_stock, 1000);
@@ -3034,10 +3065,13 @@ async function predictStock() {
                             </div>
                         </div>
                     </div>
-           if (unitLabel) unitLabel.innerText = String(s || item?.satuan || 'unit').toUpperCase();
+                `;
+            }
+
+            if (unitLabel) unitLabel.innerText = String(s || item?.satuan || 'unit').toUpperCase();
             if (locLabel) locLabel.innerText = lokasi;
             if (res) res.classList.remove('loading-pulse');
-
+        }, 500);
     } catch (e) {
         console.error("Predict error:", e);
         showToast('Terjadi kesalahan saat prediksi.', 'error');
@@ -3060,10 +3094,10 @@ async function saveNewLayout() {
         await saveInventory(inventory);
         const locLabel = document.getElementById('storage-location');
         if (locLabel) locLabel.innerText = newLoc;
-      // ... sisa kode fungsi saveNewLayout di atasnya ...
-    showToast("Lokasi tata letak berhasil diperbarui.", "success");
-    await updateKpiCards();
-} // <--- Cukup SATU kurung kurawal penutup untuk mengakhiri fungsi saveNewLayout
+        showToast("Lokasi tata letak berhasil diperbarui.", "success");
+        await updateKpiCards();
+    }
+}
 
 // Shelf Visualization
 async function openShelfVisualization() {
@@ -3092,8 +3126,9 @@ async function openShelfVisualization() {
             }
             grid.appendChild(cell);
         }
-    }); // <--- Pastikan loop forEach ditutup dengan benar di sini
+    });
 }
+
 function closeShelfVisualization() {
     const modal = document.getElementById('shelf-modal');
     if (modal) modal.style.display = "none";
@@ -3111,14 +3146,11 @@ function animateValue(obj, start, end, duration) {
         if (!startTimestamp) startTimestamp = timestamp;
         const progress = Math.min((timestamp - startTimestamp) / duration, 1);
         const val = Math.floor(progress * (end - start) + start);
-        
-        // Memastikan teks diisi sebagai angka biasa tanpa simbol string ilegal
-        obj.innerText = val.toLocaleString('id-ID'); 
-        
+        obj.innerHTML = val;
         if (progress < 1) {
             window.requestAnimationFrame(step);
         } else {
-            obj.innerText = end.toLocaleString('id-ID');
+            obj.innerHTML = end;
         }
     };
     window.requestAnimationFrame(step);
