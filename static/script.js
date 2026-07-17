@@ -2905,7 +2905,7 @@ async function predictStock() {
     const unitLabel = document.getElementById('result-unit');
     const locLabel = document.getElementById('storage-location');
 
-    // Input validation
+    // Validasi Input
     if (!p || !b || !t) return showToast("Lengkapi data prediksi terlebih dahulu.", "error");
     if (!Number.isFinite(lead_time) || lead_time <= 0) {
         if (leadTimeInput) leadTimeInput.value = '1';
@@ -2923,8 +2923,6 @@ async function predictStock() {
     const avgDemandInputVal = document.getElementById('avg-demand-input-val');
     const stdDevInputVal = document.getElementById('std-dev-input-val');
     const ropStatusVal = document.getElementById('rop-status-val');
-    const calculationStepsDiv = document.getElementById('calculation-steps');
-    const warningBadge = document.getElementById('input-warning');
 
     if (curStockVal) curStockVal.innerText = "...";
     if (needStockVal) needStockVal.innerText = "...";
@@ -2937,67 +2935,85 @@ async function predictStock() {
     if (res) res.classList.add('loading-pulse');
 
     try {
-        // Get current inventory data
+        // Mengambil data inventory saat ini
         const inventory = await getInventory();
         const item = inventory.find(i => i.perusahaan === p && i.barang === b);
-        const current_stock = Number(item?.stock || 0);
-        const lokasi = item?.lokasi || "Belum Ditentukan";
+        const current_stock = Number(item?.stok || 0); 
+        const unit = item?.satuan || s || 'pcs';
+        const location = item?.lokasi || '-';
 
-        // Calculate using statistical formulas
-        const z = getZScore(service_level);
-        const lead_time_days = lead_time;
-        const avg_demand_daily = avg_demand / 30; // Assume 30 days in a month
-        const std_dev_daily = std_dev / Math.sqrt(30); // Daily std dev
+        // Hitung prediksi lewat API backend
+        const response = await fetchApiWithFallback(`/api/predict`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                perusahaan: p,
+                nama_barang: b,
+                target_date: t,
+                lead_time: lead_time,
+                service_level: service_level,
+                avg_demand: avg_demand,
+                std_dev: std_dev,
+                algorithm: 'xgboost'
+            })
+        });
 
-        const safety_stock = Math.ceil(z * std_dev_daily * Math.sqrt(lead_time_days));
-        const reorder_point = Math.ceil(avg_demand_daily * lead_time_days + safety_stock);
+        if (!response.ok) {
+            const msg = await readApiErrorMessage(response);
+            showToast(msg || 'Gagal menghitung prediksi stok.', 'error');
+            if (res) res.innerText = "Gagal";
+            return;
+        }
+
+        const data = await response.json();
         
-        // Predict next month's demand (1 month = 30 days)
-        const prediction = Math.ceil(avg_demand); // Next month's demand is the avg monthly demand
-        const needed_stock = Math.max(0, prediction - current_stock);
-        
-        const reorderNeeded = current_stock <= reorder_point;
-
-        // Update last forecast result
+        // Simpan ke cache global agar bisa dipakai oleh sistem Work Order (WO)
         lastForecastResult = {
             perusahaan: p,
             nama_barang: b,
-            target_month: t,
-            prediction: prediction,
-            needed_stock: needed_stock,
-            unit: s || item?.satuan || 'unit',
+            target_month: data.target_month || t,
+            needed_stock: data.needed_stock || 0,
+            unit: unit,
             lead_time: lead_time,
-            service_level: service_level,
-            algorithm: 'Formula Statistik'
+            service_level: service_level
         };
 
-        // Save prediction log
-        try {
-            const token = sessionStorage.getItem('gudang_token') || '';
-            await fetchApiWithFallback(`/api/prediction-log`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token },
-                body: JSON.stringify({
-                    perusahaan: p,
-                    nama_barang: b,
-                    target_month: t,
-                    algorithm: 'Formula Statistik',
-                    avg_demand: avg_demand,
-                    std_dev: std_dev,
-                    prediction: prediction,
-                    current_stock: current_stock,
-                    needed_stock: needed_stock,
-                    safety_stock: safety_stock,
-                    reorder_point: reorder_point,
-                    reorder_needed: reorderNeeded,
-                    lead_time: lead_time,
-                    service_level: service_level
-                })
-            });
-        } catch (e) {
-            console.warn("Failed to save prediction log, but continuing:", e);
+        // Render Data ke UI HTML
+        if (res) {
+            res.classList.remove('loading-pulse');
+            res.innerText = Number(data.prediction || 0).toLocaleString('id-ID');
+        }
+        if (unitLabel) unitLabel.innerText = unit;
+        if (locLabel) locLabel.innerText = location;
+
+        if (curStockVal) curStockVal.innerText = current_stock.toLocaleString('id-ID');
+        if (needStockVal) needStockVal.innerText = Number(data.needed_stock || 0).toLocaleString('id-ID');
+        if (safetyStockVal) safetyStockVal.innerText = Number(data.safety_stock || 0).toLocaleString('id-ID');
+        if (ropVal) ropVal.innerText = Number(data.reorder_point || 0).toLocaleString('id-ID');
+        if (avgDemandInputVal) avgDemandInputVal.innerText = avg_demand.toLocaleString('id-ID');
+        if (stdDevInputVal) stdDevInputVal.innerText = std_dev.toLocaleString('id-ID');
+
+        // Mengatur status badge ROP (Reorder Point)
+        if (ropStatusVal) {
+            const isRop = Boolean(data.reorder_needed);
+            ropStatusVal.className = isRop ? 'rop-badge rop-badge--danger' : 'rop-badge rop-badge--success';
+            ropStatusVal.innerText = isRop ? 'Reorder' : 'Aman';
         }
 
+        // Update grafik/chart jika data deret waktu tersedia
+        if (data.history_series) {
+            renderPredictChart(data.history_series, data.target_month, data.prediction);
+        }
+
+    } catch (e) {
+        console.error("Prediction error:", e);
+        showToast('Terjadi kesalahan jaringan.', 'error');
+        if (res) {
+            res.classList.remove('loading-pulse');
+            res.innerText = "Error";
+        }
+    }
+}
         setTimeout(() => {
             if (res) animateValue(res, 0, prediction, 1000);
             if (curStockVal) animateValue(curStockVal, 0, current_stock, 1000);
