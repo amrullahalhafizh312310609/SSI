@@ -3158,11 +3158,14 @@ function animateValue(obj, start, end, duration) {
         if (!startTimestamp) startTimestamp = timestamp;
         const progress = Math.min((timestamp - startTimestamp) / duration, 1);
         const val = Math.floor(progress * (end - start) + start);
-        obj.innerHTML = val;
+        
+        // Memastikan teks diisi sebagai angka biasa tanpa simbol string ilegal
+        obj.innerText = val.toLocaleString('id-ID'); 
+        
         if (progress < 1) {
             window.requestAnimationFrame(step);
         } else {
-            obj.innerHTML = end;
+            obj.innerText = end.toLocaleString('id-ID');
         }
     };
     window.requestAnimationFrame(step);
