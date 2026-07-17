@@ -3107,10 +3107,10 @@ async function saveNewLayout() {
         await saveInventory(inventory);
         const locLabel = document.getElementById('storage-location');
         if (locLabel) locLabel.innerText = newLoc;
-        showToast("Lokasi tata letak berhasil diperbarui.", "success");
-        await updateKpiCards();
-    }
-}
+      // ... sisa kode fungsi saveNewLayout di atasnya ...
+    showToast("Lokasi tata letak berhasil diperbarui.", "success");
+    await updateKpiCards();
+} // <--- Cukup SATU kurung kurawal penutup untuk mengakhiri fungsi saveNewLayout
 
 // Shelf Visualization
 async function openShelfVisualization() {
@@ -3139,9 +3139,8 @@ async function openShelfVisualization() {
             }
             grid.appendChild(cell);
         }
-    });
+    }); // <--- Pastikan loop forEach ditutup dengan benar di sini
 }
-
 function closeShelfVisualization() {
     const modal = document.getElementById('shelf-modal');
     if (modal) modal.style.display = "none";
